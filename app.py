@@ -1016,31 +1016,33 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             entry["delim"], entry["group"], entry["type"],
         ])
 
-    # ── "Apply Column Settings" — read all dropdowns and write to conv ──
+    # ── Save dropdown values for a sheet into conv.adv_col_config ──
 
-    def _apply_col_settings(sheet, *dropdown_values):
+    def _save_dropdowns_to_config(sheet, dropdown_values):
         """
-        Read the current dropdown values for every visible column row and
-        write them into conv.adv_col_config[sheet].
-        dropdown_values is a flat tuple: (hier0, delim0, group0, type0, hier1, …)
-        with 4 values per MAX_COLUMNS slot.
+        Read the current dropdown values and write them into
+        conv.adv_col_config[sheet].  dropdown_values is a flat tuple:
+        (hier0, delim0, group0, type0, hier1, …) with 4 values per
+        MAX_COLUMNS slot.
         """
         if not sheet or sheet not in conv.sheets_data:
-            return "No sheet selected."
+            return
         cols = list(conv.sheets_data[sheet].columns)[:MAX_COLUMNS]
         config = conv.adv_col_config.setdefault(sheet, {})
 
         for idx, c in enumerate(cols):
             base = idx * 4
+            if base + 3 >= len(dropdown_values):
+                break
             h_raw = dropdown_values[base]      # "None" or "Level N"
             d_raw = dropdown_values[base + 1]  # delimiter
             g_raw = dropdown_values[base + 2]  # group
             t_raw = dropdown_values[base + 3]  # type
 
             hier_val = 0
-            if h_raw and h_raw.startswith("Level "):
+            if h_raw and str(h_raw).startswith("Level "):
                 try:
-                    hier_val = int(h_raw.split(" ")[1])
+                    hier_val = int(str(h_raw).split(" ")[1])
                 except (ValueError, IndexError):
                     hier_val = 0
 
@@ -1059,6 +1061,12 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
                     config[used_levels[lvl]]["hier"] = 0
                 used_levels[lvl] = c
 
+    def _apply_col_settings(sheet, *dropdown_values):
+        """Manual apply button handler."""
+        _save_dropdowns_to_config(sheet, dropdown_values)
+        if not sheet or sheet not in conv.sheets_data:
+            return "No sheet selected."
+        cols = list(conv.sheets_data[sheet].columns)[:MAX_COLUMNS]
         return f"Settings applied for **{sheet}** ({len(cols)} columns)."
 
     # Collect all dropdown inputs for apply
@@ -1072,18 +1080,26 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         outputs=[adv_status],
     )
 
-    # ── Sheet tab switch — refresh column config ──
+    # ── Sheet tab switch — auto-save previous sheet, then load new one ──
 
-    def on_types_tab_change(sheet):
-        if not sheet or sheet not in conv.sheets_data:
+    def on_types_tab_change(new_sheet, prev_sheet, *dropdown_values):
+        # Auto-save the PREVIOUS sheet's dropdown values before switching
+        _save_dropdowns_to_config(prev_sheet, dropdown_values)
+
+        if not new_sheet or new_sheet not in conv.sheets_data:
             lvl_update = gr.update(value="0")
-            return [lvl_update, sheet] + _refresh_col_config_outputs(None)
-        lvl = conv.adv_sheet_levels.get(sheet, 0)
-        return [gr.update(value=str(lvl)), sheet] + _refresh_col_config_outputs(sheet)
+            return [lvl_update, new_sheet] + _refresh_col_config_outputs(None)
+        lvl = conv.adv_sheet_levels.get(new_sheet, 0)
+        return [gr.update(value=str(lvl)), new_sheet] + _refresh_col_config_outputs(new_sheet)
+
+    # Inputs: new sheet selection, previous sheet state, then all dropdowns
+    _sheet_change_inputs = [types_tab_sheet, adv_sheet_state]
+    for entry in col_config_rows:
+        _sheet_change_inputs.extend([entry["hier"], entry["delim"], entry["group"], entry["type"]])
 
     types_tab_sheet.change(
         on_types_tab_change,
-        inputs=[types_tab_sheet],
+        inputs=_sheet_change_inputs,
         outputs=[hier_level_count, adv_sheet_state] + _col_cfg_outputs,
     )
 
@@ -1349,7 +1365,10 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
 
     # ── Generate ──
 
-    def gen_xml(mode_val, use_l1, use_deep, data_delim):
+    def gen_xml(mode_val, use_l1, use_deep, data_delim, current_sheet, *dropdown_values):
+        # Auto-save the currently visible sheet's dropdowns before generating
+        _save_dropdowns_to_config(current_sheet, dropdown_values)
+
         conv.use_prefix_l1 = use_l1
         conv.use_prefix_deep = use_deep
         conv.data_delimiter = None if data_delim == "No Separation" else data_delim
@@ -1360,9 +1379,14 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             traceback.print_exc()
             return gr.update(visible=False), f"**Error:** {str(e)}"
 
+    _gen_inputs = [mode_toggle, hier_show_class_l1, hier_show_class_deep,
+                   global_data_delim, adv_sheet_state]
+    for entry in col_config_rows:
+        _gen_inputs.extend([entry["hier"], entry["delim"], entry["group"], entry["type"]])
+
     gen_btn.click(
         gen_xml,
-        inputs=[mode_toggle, hier_show_class_l1, hier_show_class_deep, global_data_delim],
+        inputs=_gen_inputs,
         outputs=[gen_file, gen_status],
     )
 
