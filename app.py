@@ -96,14 +96,10 @@ class Converter:
         self.grouping_enabled: bool = False
         self.sheets_in_grouping: set[str] = set()
 
-        # Hyperlinks extracted from Excel (Ctrl+K style)
-        self.sheets_hyperlinks: dict = {}
-
         # Flags
         self.use_prefix_l1: bool = False
         self.use_prefix_deep: bool = False
         self.use_file_root: bool = True
-        self.exclude_title_from_metadata: bool = True
         self.node_name_strategy: str = "first"
         self.multi_sub_delimiter: str = ";"
         self.data_delimiter: str = ";"
@@ -150,7 +146,6 @@ class Converter:
         self.adv_sheet_levels = {}
         self.adv_grouping_enabled = False
         self.adv_groups = []
-        self.sheets_hyperlinks = {}
         for sheet, df in self.sheets_data.items():
             self.adv_sheet_levels[sheet] = 0
             self.adv_col_config[sheet] = {}
@@ -163,13 +158,11 @@ class Converter:
         try:
             xl = pd.ExcelFile(file_path, engine="openpyxl")
             self.sheets_data, self.loaded_sheets = {}, []
-            header_indices: dict[str, int] = {}
             for sheet in xl.sheet_names:
                 df_raw = pd.read_excel(xl, sheet_name=sheet, header=None, nrows=25)
                 if df_raw.empty:
                     continue
                 header_idx = self._find_header_row(df_raw)
-                header_indices[sheet] = header_idx
                 df = pd.read_excel(xl, sheet_name=sheet, header=header_idx)
                 df.columns = self._clean_headers(df.columns)
                 df = df.replace('', pd.NA).dropna(how='all')
@@ -182,42 +175,11 @@ class Converter:
             self.root_name = re.sub(r'[\\/*?:"<>|]', "", raw_name)
             self.selected_sheets = set(s for s in self.loaded_sheets if s != "structure")
             self._reset_state()
-            self.sheets_hyperlinks = self._extract_xlsx_hyperlinks(file_path, header_indices)
             return True, f"Loaded {len(self.loaded_sheets)} sheets.", [
                 s for s in self.loaded_sheets if s != "structure"
             ]
         except Exception as e:
             return False, f"Excel Error: {str(e)}", []
-
-    def _extract_xlsx_hyperlinks(self, file_path: str, header_indices: dict) -> dict:
-        """Extract Ctrl+K (cell-level) hyperlinks from an Excel file using openpyxl."""
-        result = {}
-        try:
-            import openpyxl as _opxl
-            wb = _opxl.load_workbook(file_path)
-            for sheet_name in wb.sheetnames:
-                if sheet_name not in self.sheets_data:
-                    continue
-                ws = wb[sheet_name]
-                h_idx = header_indices.get(sheet_name, 0)
-                opxl_header_row = h_idx + 1  # openpyxl is 1-based
-                raw_headers = [
-                    ws.cell(row=opxl_header_row, column=c).value
-                    for c in range(1, ws.max_column + 1)
-                ]
-                clean_cols = self._clean_headers(raw_headers)
-                sheet_links: dict[tuple, str] = {}
-                for opxl_row in range(opxl_header_row + 1, ws.max_row + 1):
-                    df_row_idx = opxl_row - opxl_header_row - 1
-                    for col_pos, col_name in enumerate(clean_cols, start=1):
-                        cell = ws.cell(row=opxl_row, column=col_pos)
-                        if cell.hyperlink and cell.hyperlink.target:
-                            sheet_links[(df_row_idx, col_name)] = cell.hyperlink.target
-                if sheet_links:
-                    result[sheet_name] = sheet_links
-        except Exception:
-            pass  # hyperlinks are optional; fail silently
-        return result
 
     def load_gsheet(self, url: str, creds_json: str) -> tuple[bool, str, list[str]]:
         if not HAS_SHEETS:
@@ -301,29 +263,16 @@ class Converter:
     def _row_to_elements(self, row: pd.Series, cols: list[str],
                          sheet: str) -> list[dict]:
         result = []
-        sheet_links = self.sheets_hyperlinks.get(sheet, {})
         for col in cols:
             val = row.get(col)
             if pd.notna(val) and str(val).strip():
                 v_str = str(val).strip()
-                pref = self.column_type_preferences.get(sheet, {}).get(col, "auto")
-
-                # Check for a Ctrl+K (cell-level) hyperlink from openpyxl
-                cell_hyperlink = sheet_links.get((row.name, col))
-                if cell_hyperlink and pref != "text":
-                    ltype = self._detect_type(cell_hyperlink) if pref == "auto" else pref
-                    if ltype not in ["image", "youtube"]:
-                        ltype = "link"
-                    content = "" if ltype in ["image", "youtube"] else v_str
-                    result.append({"tclass": str(col), "link": cell_hyperlink,
-                                   "type": ltype, "content": content})
-                    continue  # skip delimiter-based splitting for this cell
-
                 values = [v_str]
                 if self.data_delimiter and self.data_delimiter != "No Separation":
                     values = [x.strip() for x in v_str.split(self.data_delimiter) if x.strip()]
                 for v in values:
                     text, url, has_link = self._extract_url_from_formula(v)
+                    pref = self.column_type_preferences.get(sheet, {}).get(col, "auto")
                     if pref == "text":
                         result.append({"tclass": str(col), "link": "", "type": "text", "content": v})
                     else:
@@ -379,12 +328,7 @@ class Converter:
             title = f"{sheet_name}_{row.name}"
         if title in self.node_map:
             return self.node_map[title]
-        data_cols = cols
-        if self.exclude_title_from_metadata:
-            configured_title_col = self.sheet_title_cols.get(sheet_name)
-            if configured_title_col and configured_title_col in cols:
-                data_cols = [c for c in cols if c != configured_title_col]
-        node = GraphNode(title, self._row_to_elements(row, data_cols, sheet_name), sheet_name)
+        node = GraphNode(title, self._row_to_elements(row, cols, sheet_name), sheet_name)
         self.nodes.append(node)
         self.node_map[title] = node
         self.node_map[node_id] = node
@@ -866,12 +810,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
                 choices=["Typical (Simple)", "Advanced"], value="Typical (Simple)",
                 label="Mode", info="Advanced mode unlocks grouping and custom types.",
             )
-            with gr.Column():
-                use_file_root_cb = gr.Checkbox(label="Use File Name as Root Node", value=True)
-                excl_title_meta_cb = gr.Checkbox(
-                    label="Remove Title Data from Metadata", value=True,
-                    info="When enabled, the title column value is not added as a metadata field on the node.",
-                )
+            use_file_root_cb = gr.Checkbox(label="Use File Name as Root Node", value=True)
             global_data_delim = gr.Dropdown(choices=DELIMITER_CHOICES, value=";",
                                             label="Data Field Separator")
 
@@ -1401,16 +1340,11 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         conv.use_file_root = val
         return invalidate()
 
-    def set_excl_title_meta(val):
-        conv.exclude_title_from_metadata = val
-        return invalidate()
-
     def set_direction(val):
         conv.edge_direction = val
         return invalidate()
 
     use_file_root_cb.change(set_root_flag, inputs=[use_file_root_cb], outputs=[gen_file])
-    excl_title_meta_cb.change(set_excl_title_meta, inputs=[excl_title_meta_cb], outputs=[gen_file])
     direction.change(set_direction, inputs=[direction], outputs=[gen_file])
     hier_show_class_l1.change(invalidate, outputs=[gen_file])
     hier_show_class_deep.change(invalidate, outputs=[gen_file])
