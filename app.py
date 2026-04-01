@@ -22,6 +22,7 @@ import re
 import uuid
 import json
 import traceback
+import datetime
 import typing as t
 from difflib import SequenceMatcher
 import xml.etree.ElementTree as ET
@@ -744,11 +745,224 @@ body, .gradio-container { background: var(--bg); font-family: 'Inter', sans-seri
 .btn-del { background-color: #fee2e2 !important; color: #b91c1c !important; border: 1px solid #fca5a5 !important; height: 40px; font-size: 13px; }
 input, select, textarea { font-size: 14px !important; border-radius: 6px !important; }
 textarea { height: 80px !important; }
+.tpl-bar { background: linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%) !important; border-color: #c7d2fe !important; }
 """
  
 conv = Converter()
- 
+
+# ─────────────────────────────────────────────────────────────
+# TEMPLATE PERSISTENCE HELPERS
+# ─────────────────────────────────────────────────────────────
+TEMPLATES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates.json")
+
+
+def _tmpl_load_all() -> dict:
+    if os.path.exists(TEMPLATES_FILE):
+        try:
+            with open(TEMPLATES_FILE, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except Exception:
+            return {}
+    return {}
+
+
+def _tmpl_save_all(data: dict) -> None:
+    with open(TEMPLATES_FILE, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, ensure_ascii=False)
+
+
+def _tmpl_snapshot_structure() -> dict:
+    """Capture {sheet: [col, ...]} for the currently-loaded file."""
+    return {s: list(df.columns) for s, df in conv.sheets_data.items()}
+
+
+def _tmpl_collect_config() -> dict:
+    """Collect all Converter settings into a serialisable dict."""
+    return {
+        "column_type_preferences": conv.column_type_preferences,
+        "hierarchy_configs": {
+            s: [
+                {"col": lv["col"], "delim": lv.get("delim")} if isinstance(lv, dict)
+                else {"col": str(lv), "delim": None}
+                for lv in levels
+            ]
+            for s, levels in conv.hierarchy_configs.items()
+        },
+        "sheet_title_cols": conv.sheet_title_cols,
+        "manual_grouping_rules": [
+            {
+                "name": r.get("name", "Group"),
+                "pairs": [[e, c] for e, c in r.get("pairs", [])],
+                "delimiter": r.get("delimiter"),
+            }
+            for r in conv.manual_grouping_rules
+        ],
+        "selected_sheets": sorted(list(conv.selected_sheets)),
+        "data_delimiter": conv.data_delimiter,
+        "edge_direction": conv.edge_direction,
+        "use_prefix_l1": conv.use_prefix_l1,
+        "use_prefix_deep": conv.use_prefix_deep,
+        "use_file_root": conv.use_file_root,
+        "exclude_title_from_data": conv.exclude_title_from_data,
+    }
+
+
+def _tmpl_apply(template: dict) -> tuple:
+    """
+    Apply a saved template to conv, respecting the current file structure.
+    Returns (applied_msgs, skipped_msgs, match_type).
+    match_type: "full" | "partial" | "none"
+    """
+    config = template["config"]
+    current_meta = _tmpl_snapshot_structure()
+
+    applied: list = []
+    skipped: list = []
+    total_sc = 0
+    applicable_sc = 0
+
+    def _check(sheet: str, col: str) -> bool:
+        nonlocal total_sc, applicable_sc
+        total_sc += 1
+        ok = sheet in current_meta and col in current_meta[sheet]
+        if ok:
+            applicable_sc += 1
+        return ok
+
+    # Pre-scan all sheet+column-specific settings for threshold calculation
+    for sheet, col_prefs in config.get("column_type_preferences", {}).items():
+        for col in col_prefs:
+            _check(sheet, col)
+    for sheet, levels in config.get("hierarchy_configs", {}).items():
+        for lv in levels:
+            _check(sheet, lv["col"] if isinstance(lv, dict) else str(lv))
+    for sheet, col in config.get("sheet_title_cols", {}).items():
+        _check(sheet, col)
+    for rule in config.get("manual_grouping_rules", []):
+        for pair in rule.get("pairs", []):
+            _check(pair[0], pair[1])
+
+    if total_sc == 0:
+        match_type = "full"
+    elif applicable_sc == total_sc:
+        match_type = "full"
+    elif applicable_sc > total_sc / 2:
+        match_type = "partial"
+    else:
+        match_type = "none"
+
+    if match_type == "none" and total_sc > 0:
+        return applied, skipped, match_type
+
+    # ── Global settings (always applied) ──────────────────────
+    for key in ("data_delimiter", "edge_direction", "use_prefix_l1", "use_prefix_deep",
+                "use_file_root", "exclude_title_from_data"):
+        if key in config:
+            setattr(conv, key, config[key])
+            applied.append(f"Setting `{key}` = `{config[key]}`")
+
+    # ── selected_sheets ───────────────────────────────────────
+    saved_sel = config.get("selected_sheets", [])
+    new_sel = [s for s in saved_sel if s in current_meta]
+    for s in saved_sel:
+        if s not in current_meta:
+            skipped.append(f"Sheet '{s}' not found — removed from selection")
+    if new_sel:
+        conv.selected_sheets = set(new_sel)
+        applied.append(f"Selected sheets: {', '.join(new_sel)}")
+
+    # ── column_type_preferences ───────────────────────────────
+    new_ctp: dict = {}
+    for sheet, col_prefs in config.get("column_type_preferences", {}).items():
+        if sheet not in current_meta:
+            for col in col_prefs:
+                skipped.append(f"Sheet '{sheet}' not found — type pref for '{col}' skipped")
+            continue
+        sp: dict = {}
+        for col, pref in col_prefs.items():
+            if col in current_meta[sheet]:
+                sp[col] = pref
+                applied.append(f"Column type `{sheet}.{col}` → `{pref}`")
+            else:
+                skipped.append(f"Column '{col}' not in '{sheet}' — type pref skipped")
+        if sp:
+            new_ctp[sheet] = sp
+    conv.column_type_preferences = new_ctp
+
+    # ── hierarchy_configs ─────────────────────────────────────
+    new_hc: dict = {}
+    for sheet, levels in config.get("hierarchy_configs", {}).items():
+        if sheet not in current_meta:
+            skipped.append(f"Sheet '{sheet}' not found — {len(levels)} hierarchy level(s) skipped")
+            continue
+        valid: list = []
+        for lv in levels:
+            col = lv["col"] if isinstance(lv, dict) else str(lv)
+            if col in current_meta[sheet]:
+                valid.append(lv)
+                applied.append(f"Hierarchy `{sheet}.{col}`")
+            else:
+                skipped.append(f"Column '{col}' not in '{sheet}' — hierarchy level skipped")
+        if valid:
+            new_hc[sheet] = valid
+    conv.hierarchy_configs = new_hc
+
+    # ── sheet_title_cols ──────────────────────────────────────
+    new_stc: dict = {}
+    for sheet, col in config.get("sheet_title_cols", {}).items():
+        if sheet not in current_meta:
+            skipped.append(f"Sheet '{sheet}' not found — title column skipped")
+        elif col not in current_meta[sheet]:
+            skipped.append(f"Column '{col}' not in '{sheet}' — title column skipped")
+        else:
+            new_stc[sheet] = col
+            applied.append(f"Title column `{sheet}` → `{col}`")
+    conv.sheet_title_cols = new_stc
+
+    # ── manual_grouping_rules ─────────────────────────────────
+    new_rules: list = []
+    for rule in config.get("manual_grouping_rules", []):
+        valid_pairs: list = []
+        for pair in rule.get("pairs", []):
+            entity, col = pair[0], pair[1]
+            if entity not in current_meta:
+                skipped.append(f"Sheet '{entity}' not found — grouping '{rule.get('name', '')}' pair skipped")
+            elif col not in current_meta[entity]:
+                skipped.append(f"Column '{col}' not in '{entity}' — grouping '{rule.get('name', '')}' pair skipped")
+            else:
+                valid_pairs.append([entity, col])
+                applied.append(f"Grouping '{rule.get('name', 'Group')}': `{entity}.{col}`")
+        if valid_pairs:
+            new_rules.append({**rule, "pairs": valid_pairs})
+    conv.manual_grouping_rules = new_rules
+
+    return applied, skipped, match_type
+
+
 with gr.Blocks(css=css, title="Graph Converter") as app:
+    # ─── TEMPLATE MANAGEMENT BAR ───────────────────────────────
+    with gr.Group(elem_classes=["step-card", "tpl-bar"]):
+        gr.HTML('<div class="step-header" style="color:#4f46e5; border-color:#c7d2fe;">Template Management</div>')
+        with gr.Row(elem_classes=["clean-row"]):
+            tpl_login = gr.Textbox(label="Login", placeholder="Enter your login identifier", scale=3)
+            tpl_save_btn = gr.Button("💾 Save Template", elem_classes=["btn-action"], scale=1)
+            tpl_load_btn = gr.Button("📂 Load Template", elem_classes=["btn-action"], scale=1)
+
+        with gr.Column(visible=False) as tpl_save_panel:
+            with gr.Row(elem_classes=["clean-row"]):
+                tpl_name_input = gr.Textbox(label="Template Name", placeholder="Leave empty for auto-generated name", scale=3)
+                tpl_overwrite_cb = gr.Checkbox(label="Overwrite if exists", value=False, visible=False, scale=1)
+                tpl_confirm_save_btn = gr.Button("✅ Confirm Save", variant="primary", elem_classes=["btn-main"], scale=1)
+
+        with gr.Column(visible=False) as tpl_load_panel:
+            with gr.Row(elem_classes=["clean-row"]):
+                tpl_list = gr.Dropdown(choices=[], label="Select Template", scale=3)
+                tpl_confirm_load_btn = gr.Button("✅ Apply Template", variant="primary", elem_classes=["btn-main"], scale=1)
+
+        tpl_status = gr.Markdown(value="")
+        with gr.Accordion("Applied / Skipped Settings", open=True, visible=False) as tpl_summary_accordion:
+            tpl_summary = gr.Markdown()
+
     # --- STEP 1 ---
     with gr.Group(elem_classes=["step-card"]):
         gr.HTML('<div class="step-header">Step 1: Setup & Source</div>')
@@ -1007,7 +1221,122 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         except Exception as e:
             traceback.print_exc()
             return gr.update(visible=False), f"❌ **Error:** {str(e)}"
- 
+
+    # ── TEMPLATE HANDLERS ──────────────────────────────────────
+
+    def tpl_init_save(login):
+        if not (login or "").strip():
+            return gr.update(visible=False), gr.update(visible=False), gr.update(visible=False, value=False), "⚠️ Please enter a login before saving."
+        if not conv.loaded_sheets:
+            return gr.update(visible=False), gr.update(visible=False), gr.update(visible=False, value=False), "⚠️ Please load a file before saving a template."
+        return gr.update(visible=True), gr.update(visible=False), gr.update(visible=False, value=False), ""
+
+    def tpl_confirm_save(login, name, overwrite):
+        login = (login or "").strip()
+        if not login:
+            return gr.update(visible=True), gr.update(visible=False), gr.update(), "⚠️ Login is required."
+        if not conv.loaded_sheets:
+            return gr.update(visible=False), gr.update(visible=False), gr.update(), "⚠️ No file loaded — cannot save template."
+        name = (name or "").strip()
+        if not name:
+            name = f"template_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        all_tpls = _tmpl_load_all()
+        user_tpls = all_tpls.get(login, {})
+        if name in user_tpls and not overwrite:
+            return (gr.update(visible=True), gr.update(visible=True), gr.update(),
+                    f"⚠️ Template **{name}** already exists. Check 'Overwrite if exists' and click Confirm again.")
+        action_word = "overwritten" if (name in user_tpls and overwrite) else "saved"
+        entry = {
+            "created": datetime.datetime.now().isoformat(),
+            "structural_metadata": _tmpl_snapshot_structure(),
+            "config": _tmpl_collect_config(),
+        }
+        user_tpls[name] = entry
+        all_tpls[login] = user_tpls
+        _tmpl_save_all(all_tpls)
+        return gr.update(visible=False), gr.update(visible=False), gr.update(value=""), f"✅ Template **{name}** {action_word} successfully."
+
+    def tpl_init_load(login):
+        login = (login or "").strip()
+        if not login:
+            return gr.update(visible=False), gr.update(visible=False), gr.update(choices=[]), "⚠️ Please enter a login before loading."
+        if not conv.loaded_sheets:
+            return gr.update(visible=False), gr.update(visible=False), gr.update(choices=[]), "⚠️ Please load a file before applying a template."
+        all_tpls = _tmpl_load_all()
+        user_tpls = all_tpls.get(login, {})
+        if not user_tpls:
+            return gr.update(visible=False), gr.update(visible=False), gr.update(choices=[]), f"ℹ️ No templates found for login **{login}**."
+        names = sorted(user_tpls.keys())
+        return gr.update(visible=True), gr.update(visible=False), gr.update(choices=names, value=names[0]), ""
+
+    def tpl_apply_fn(login, tpl_name):
+        # 15 outputs: tpl_status, tpl_load_panel, sheets_sel, hier_sheet, hier_data,
+        # hier_add_col, nt_view, grp_data, direction, use_file_root_cb,
+        # exclude_title_cb, global_data_delim, gen_file, tpl_summary_accordion, tpl_summary
+
+        def _noop(msg):
+            return (msg, gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(), gr.update(), gr.update(visible=False), gr.update())
+
+        login = (login or "").strip()
+        if not login or not tpl_name:
+            return _noop("⚠️ Please select a template to apply.")
+        all_tpls = _tmpl_load_all()
+        template = all_tpls.get(login, {}).get(tpl_name)
+        if not template:
+            return _noop(f"⚠️ Template **{tpl_name}** not found for login **{login}**.")
+
+        applied, skipped, match_type = _tmpl_apply(template)
+
+        if match_type == "none":
+            return _noop(
+                f"❌ Template **{tpl_name}** is incompatible with the current file — "
+                f"fewer than half of the structural settings could be applied."
+            )
+
+        # Build summary markdown
+        parts = []
+        if applied:
+            parts.append("**Applied:**\n" + "\n".join(f"- {a}" for a in applied))
+        if skipped:
+            parts.append("**Skipped:**\n" + "\n".join(f"- {s}" for s in skipped))
+        summary_md = "\n\n".join(parts)
+
+        if match_type == "full":
+            status_msg = f"✅ Template **{tpl_name}** applied — {len(applied)} settings applied."
+        else:
+            status_msg = (f"⚠️ Template **{tpl_name}** partially applied — "
+                          f"{len(applied)} applied, {len(skipped)} skipped.")
+
+        sel_list = sorted(list(conv.selected_sheets))
+        first = sel_list[0] if sel_list else None
+        hier_avail = []
+        if first and first in conv.sheets_data:
+            all_c = list(conv.sheets_data[first].columns)
+            used_c = [lv["col"] if isinstance(lv, dict) else str(lv) for lv in conv.hierarchy_configs.get(first, [])]
+            hier_avail = [c for c in all_c if c not in used_c]
+
+        delim_val = conv.data_delimiter if conv.data_delimiter else "No Separation"
+
+        return (
+            status_msg,                                        # tpl_status
+            gr.update(visible=False),                          # tpl_load_panel
+            gr.update(value=sel_list),                         # sheets_sel
+            gr.update(value=first),                            # hier_sheet
+            format_hier_df(first),                             # hier_data
+            gr.update(choices=hier_avail),                     # hier_add_col
+            format_nt_df(),                                    # nt_view
+            format_grp_df(),                                   # grp_data
+            gr.update(value=conv.edge_direction),              # direction
+            gr.update(value=conv.use_file_root),               # use_file_root_cb
+            gr.update(value=conv.exclude_title_from_data),     # exclude_title_cb
+            gr.update(value=delim_val),                        # global_data_delim
+            invalidate(),                                      # gen_file
+            gr.update(visible=bool(summary_md)),               # tpl_summary_accordion
+            summary_md,                                        # tpl_summary
+        )
+
     # --- BINDINGS ---
     mode_toggle.change(toggle_mode, inputs=[mode_toggle], outputs=[advanced_group])
     use_file_root_cb.change(set_root_flag, inputs=[use_file_root_cb], outputs=[gen_file])
@@ -1040,7 +1369,35 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     nt_btn.click(set_node_title, inputs=[nt_sheet, nt_col], outputs=[nt_view, gen_file])
     types_tab_sheet.change(on_types_tab, inputs=[types_tab_sheet, types_state], outputs=[types_html])
     gen_btn.click(gen_xml, inputs=[mode_toggle, hier_show_class_l1, hier_show_class_deep, global_data_delim], outputs=[gen_file, gen_status])
- 
+
+    # ── TEMPLATE BINDINGS ──────────────────────────────────────
+    tpl_save_btn.click(
+        tpl_init_save,
+        inputs=[tpl_login],
+        outputs=[tpl_save_panel, tpl_load_panel, tpl_overwrite_cb, tpl_status],
+    )
+    tpl_confirm_save_btn.click(
+        tpl_confirm_save,
+        inputs=[tpl_login, tpl_name_input, tpl_overwrite_cb],
+        outputs=[tpl_save_panel, tpl_overwrite_cb, tpl_name_input, tpl_status],
+    )
+    tpl_load_btn.click(
+        tpl_init_load,
+        inputs=[tpl_login],
+        outputs=[tpl_load_panel, tpl_save_panel, tpl_list, tpl_status],
+    )
+    tpl_confirm_load_btn.click(
+        tpl_apply_fn,
+        inputs=[tpl_login, tpl_list],
+        outputs=[
+            tpl_status, tpl_load_panel,
+            sheets_sel, hier_sheet, hier_data, hier_add_col,
+            nt_view, grp_data, direction, use_file_root_cb,
+            exclude_title_cb, global_data_delim, gen_file,
+            tpl_summary_accordion, tpl_summary,
+        ],
+    )
+
     app.load(None, None, gs_json, js="() => localStorage.getItem('gs_creds') || ''")
     gs_json.change(None, gs_json, None, js="(v) => localStorage.setItem('gs_creds', v)")
  
