@@ -746,6 +746,19 @@ body, .gradio-container { background: var(--bg); font-family: 'Inter', sans-seri
 input, select, textarea { font-size: 14px !important; border-radius: 6px !important; }
 textarea { height: 80px !important; }
 .tpl-bar { background: linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%) !important; border-color: #c7d2fe !important; }
+.adv-table { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+.adv-table th { text-align:left; padding:8px 10px; background:#f3f4f6; border:1px solid #e5e7eb; font-weight:600; color:#374151; white-space:nowrap; }
+.adv-table td { padding:6px 10px; border:1px solid #e5e7eb; vertical-align:middle; }
+.adv-table tr:nth-child(even) td { background:#fafafa; }
+.adv-table tr:hover td { background:#eff6ff; }
+.adv-col-name { font-weight:600; color:#1f2937; min-width:120px; }
+.adv-table select { width:100%; border:1px solid #d1d5db; border-radius:4px; padding:4px 6px; font-size:12px; background:#fff; cursor:pointer; }
+.adv-table select:focus { outline:2px solid #2563eb; border-color:#2563eb; }
+.group-tag { display:inline-flex; align-items:center; gap:6px; background:#ede9fe; color:#5b21b6; padding:4px 12px; border-radius:20px; margin:3px; font-size:13px; font-weight:500; }
+.group-tag button { background:none; border:none; color:#7c3aed; cursor:pointer; font-size:15px; line-height:1; padding:0; }
+.sheet-btn-row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+.sheet-btn { padding:6px 16px; border-radius:8px; border:2px solid #e5e7eb; background:#fff; cursor:pointer; font-size:13px; font-weight:500; color:#374151; transition:all 0.15s; }
+.sheet-btn.active { border-color:#2563eb; background:#eff6ff; color:#2563eb; }
 """
  
 conv = Converter()
@@ -990,8 +1003,8 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             global_data_delim = gr.Dropdown(choices=DELIMITER_CHOICES, value=";", label="Data Field Separator")
         status = gr.Markdown(value="Ready to load data.")
  
-    with gr.Row():
-        # --- STEP 2 ---
+    # --- STEP 2 (Simple Mode) ---
+    with gr.Row(visible=True) as step2_simple_row:
         with gr.Column(scale=3):
             with gr.Group(elem_classes=["step-card"]):
                 gr.HTML('<div class="step-header" style="color:#2563eb; border-color:#bfdbfe;">Step 2: Hierarchy</div>')
@@ -1000,56 +1013,82 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
                     hier_add_col = gr.Dropdown(choices=[], label="Select Column to Drill Down", scale=2)
                     hier_delim = gr.Dropdown(choices=DELIMITER_CHOICES, value=";", label="Separator", scale=1)
                     hier_add_btn = gr.Button("+ Add Level", elem_classes=["btn-action"], scale=1)
- 
+
                 with gr.Row():
                     hier_show_class_l1 = gr.Checkbox(label="Show Column Name in Level 1", value=False)
                     hier_show_class_deep = gr.Checkbox(label="Show Column Name in Deeper Levels", value=False)
- 
+
                 hier_data = gr.Dataframe(headers=["Level", "Column Name", "Separator"], datatype=["number", "str", "str"], row_count=0, col_count=(3, "fixed"), interactive=False, label="Structure Preview")
                 with gr.Row(elem_classes=["clean-row"]):
                     hier_up_btn = gr.Button("↑ Move Up", elem_classes=["btn-action"])
                     hier_down_btn = gr.Button("↓ Move Down", elem_classes=["btn-action"])
                     hier_del_btn = gr.Button("× Delete Selected", elem_classes=["btn-del"])
- 
-        # --- ADVANCED ---
-        with gr.Column(scale=2, visible=False) as advanced_group:
-            with gr.Group(elem_classes=["step-card"]):
-                gr.HTML('<div class="step-header" style="color:#7c3aed; border-color:#ddd6fe;">Advanced</div>')
-                # 1. Select Entities
-                gr.Markdown("### 1. Select Entities")
-                sheets_sel = gr.CheckboxGroup(choices=[], label="Include Sheets")
-                gr.HTML('<div style="height:12px"></div>')
- 
-                # 2. Node Title
-                gr.Markdown("### 2. Node Title Configuration")
-                with gr.Row(elem_classes=["clean-row"]):
-                    nt_sheet = gr.Dropdown(choices=[], label="Sheet", scale=2)
-                    nt_col = gr.Dropdown(choices=[], label="Title Column", scale=2)
-                    nt_btn = gr.Button("Set Title", elem_classes=["btn-action"], scale=1)
-                nt_view = gr.Dataframe(headers=["Sheet", "Title Column"], datatype=["str", "str"], interactive=False)
-                gr.HTML('<div style="height:12px"></div>')
- 
-                # 3. Direction
-                direction = gr.Radio(choices=["left", "right"], value="left", label="Edge Direction")
-                gr.HTML('<div style="height:12px"></div>')
- 
-                # 4. Grouping
-                gr.Markdown("### 4. Grouping Rules")
-                with gr.Row(elem_classes=["clean-row"]):
-                    grp_name = gr.Textbox(label="Name", scale=2)
-                    grp_entity = gr.Dropdown(choices=[], label="Entity", scale=2)
-                    grp_col = gr.Dropdown(choices=[], label="Column", scale=2)
-                    grp_delim = gr.Dropdown(choices=DELIMITER_CHOICES, value=";", label="Separator", scale=1)
-                    grp_add_btn = gr.Button("Add", elem_classes=["btn-action"], scale=1)
-                grp_data = gr.Dataframe(headers=["Group Name", "Entity", "Column", "Separator"], datatype=["str", "str", "str", "str"], row_count=0, col_count=(4, "fixed"), interactive=False)
-                grp_del_btn = gr.Button("Delete Group", elem_classes=["btn-del"])
-                gr.HTML('<div style="height:12px"></div>')
- 
-                # 5. Types
-                gr.Markdown("### 5. Column Types")
-                types_tab_sheet = gr.Radio(choices=[], label="Sheet")
-                types_state = gr.State({})
-                types_html = gr.HTML()
+
+    # --- ADVANCED MODE (Full-Width) ---
+    with gr.Group(elem_classes=["step-card"], visible=False) as advanced_group:
+        gr.HTML('<div class="step-header" style="color:#7c3aed; border-color:#ddd6fe;">Advanced Configuration</div>')
+
+        # State for advanced mode config
+        adv_state = gr.State({"groups": [], "sheets": {}})
+        adv_cur_sheet = gr.State("")
+        # Hidden textbox: JS writes column-config changes here
+        adv_col_change = gr.Textbox(visible=False, elem_id="adv-col-change-tb")
+
+        # --- Included Sheets ---
+        gr.Markdown("**Included Sheets**", elem_classes=["clean-row"])
+        sheets_sel = gr.CheckboxGroup(choices=[], label="", elem_id="adv-sheets-sel")
+
+        # --- Edge Direction ---
+        direction = gr.Radio(choices=["left", "right"], value="left", label="Edge Direction")
+
+        gr.HTML('<hr style="border:none;border-top:1px solid #e5e7eb;margin:12px 0">')
+
+        # --- Cross-Sheet Groups ---
+        gr.Markdown("### Cross-Sheet Groups")
+        gr.Markdown("Create named groups — then assign them to columns in any sheet's table below.")
+        with gr.Row(elem_classes=["clean-row"]):
+            adv_grp_input = gr.Textbox(label="New Group Name", placeholder="e.g. Fruits", scale=3)
+            adv_grp_add_btn = gr.Button("+ Add Group", elem_classes=["btn-action"], scale=1)
+            adv_grp_del_dropdown = gr.Dropdown(choices=[], label="Delete Group", scale=2)
+            adv_grp_del_btn = gr.Button("× Delete", elem_classes=["btn-del"], scale=1)
+        adv_grp_display = gr.HTML("<p style='color:#888;font-size:13px'>No groups yet.</p>")
+
+        gr.HTML('<hr style="border:none;border-top:1px solid #e5e7eb;margin:12px 0">')
+
+        # --- Per-Sheet Configuration ---
+        gr.Markdown("### Sheet Configuration")
+        gr.Markdown("Select a sheet to configure its columns — settings are saved per sheet.")
+
+        with gr.Row(elem_classes=["clean-row"]):
+            adv_sheet_radio = gr.Radio(choices=[], label="Select Sheet Configuration", scale=4)
+            adv_num_levels = gr.Dropdown(
+                choices=[0, 1, 2, 3, 4, 5], value=0,
+                label="Number of Hierarchy Levels",
+                info="How many hierarchy levels are selectable in the table below.",
+                scale=2
+            )
+
+        with gr.Row(elem_classes=["clean-row"]):
+            adv_title_col = gr.Dropdown(choices=[], label="Title Column (node name)", scale=3)
+
+        # The interactive configuration table (rendered as HTML with JS)
+        adv_table_html = gr.HTML("<p style='color:#888'>Load a file and select a sheet.</p>")
+
+        # Legacy components kept for simple-mode compatibility (hidden)
+        nt_sheet = gr.Dropdown(choices=[], visible=False)
+        nt_col = gr.Dropdown(choices=[], visible=False)
+        nt_btn = gr.Button(visible=False)
+        nt_view = gr.Dataframe(headers=["Sheet", "Title Column"], datatype=["str", "str"], interactive=False, visible=False)
+        grp_name = gr.Textbox(visible=False)
+        grp_entity = gr.Dropdown(choices=[], visible=False)
+        grp_col = gr.Dropdown(choices=[], visible=False)
+        grp_delim = gr.Dropdown(choices=DELIMITER_CHOICES, value=";", visible=False)
+        grp_add_btn = gr.Button(visible=False)
+        grp_data = gr.Dataframe(headers=["Group Name", "Entity", "Column", "Separator"], datatype=["str", "str", "str", "str"], row_count=0, col_count=(4, "fixed"), interactive=False, visible=False)
+        grp_del_btn = gr.Button(visible=False)
+        types_tab_sheet = gr.Radio(choices=[], visible=False)
+        types_state = gr.State({})
+        types_html = gr.HTML(visible=False)
  
     # --- STEP 3 ---
     with gr.Group(elem_classes=["step-card"]):
@@ -1059,6 +1098,8 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         gen_status = gr.Markdown()
  
     # --- LOGIC ---
+
+    # ── Simple-mode helpers ───────────────────────────────────────
     def format_hier_df(sheet_name):
         if not sheet_name or sheet_name not in conv.hierarchy_configs: return []
         res = []
@@ -1068,152 +1109,459 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             else:
                 res.append([i+1, str(item), ';'])
         return res
- 
-    def format_grp_df():
-        d = []
-        for r in conv.manual_grouping_rules:
-            n = r.get("name", "Group")
-            delim = r.get("delimiter", ";")
-            for e, c in r.get("pairs", []): d.append([n, e, c, delim])
-        return d
- 
-    def format_nt_df():
-        return [[s, c] for s, c in conv.sheet_title_cols.items()]
- 
+
     def invalidate(): return gr.update(value=None, visible=False)
+
+    # ── Advanced-mode helpers ─────────────────────────────────────
+
+    def render_adv_groups(adv_config):
+        groups = adv_config.get("groups", [])
+        if not groups:
+            return "<p style='color:#888;font-size:13px;margin:4px 0'>No groups yet. Add a name above.</p>"
+        tags = "".join(
+            f'<span class="group-tag">{g}</span>' for g in groups
+        )
+        return f'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">{tags}</div>'
+
+    def render_adv_table(sheet, adv_config):
+        if not sheet or sheet not in conv.sheets_data:
+            return "<p style='color:#888'>Load a file and select a sheet to configure.</p>"
+
+        sheet_cfg = adv_config.get("sheets", {}).get(sheet, {})
+        num_levels = int(sheet_cfg.get("num_levels", 0))
+        col_configs = sheet_cfg.get("col_configs", {})
+        groups = adv_config.get("groups", [])
+        cols = list(conv.sheets_data[sheet].columns)
+
+        hier_header = f"Hierarchy (1–{num_levels})" if num_levels > 0 else "Hierarchy Level"
+
+        rows_html = []
+        for col in cols:
+            cfg = col_configs.get(col, {})
+            hier_val = cfg.get("hierarchy")
+            sep_val  = cfg.get("separator", ";")
+            type_val = cfg.get("type", "auto")
+            grp_val  = cfg.get("group") or ""
+
+            # Hierarchy cell
+            if num_levels > 0:
+                h_opts = '<option value="">None</option>'
+                for i in range(1, num_levels + 1):
+                    sel = "selected" if hier_val == i else ""
+                    h_opts += f'<option value="{i}" {sel}>Level {i}</option>'
+                hier_cell = f'<select class="hier-sel" onchange="advHierChanged(this)">{h_opts}</select>'
+            else:
+                hier_cell = '<span style="color:#bbb;font-size:12px">set levels above</span>'
+
+            # Separator cell
+            sep_cell = '<select class="sep-sel" onchange="advTableChanged()">'
+            for s in [";", ",", "|", "No Separation"]:
+                sel = "selected" if sep_val == s else ""
+                sep_cell += f'<option value="{s}" {sel}>{s}</option>'
+            sep_cell += "</select>"
+
+            # Type cell
+            type_cell = '<select class="type-sel" onchange="advTableChanged()">'
+            for t in TYPE_CHOICES:
+                sel = "selected" if type_val == t else ""
+                type_cell += f'<option value="{t}" {sel}>{t}</option>'
+            type_cell += "</select>"
+
+            # Group cell
+            grp_cell = '<select class="grp-sel" onchange="advTableChanged()">'
+            grp_cell += '<option value="">None</option>'
+            for g in groups:
+                sel = "selected" if grp_val == g else ""
+                grp_cell += f'<option value="{g}" {sel}>{g}</option>'
+            grp_cell += "</select>"
+
+            safe_col = col.replace('"', '&quot;')
+            rows_html.append(
+                f'<tr data-col="{safe_col}">'
+                f'<td class="adv-col-name">{col}</td>'
+                f'<td>{hier_cell}</td>'
+                f'<td>{sep_cell}</td>'
+                f'<td>{type_cell}</td>'
+                f'<td>{grp_cell}</td>'
+                f'</tr>'
+            )
+
+        js_block = f'''<script>
+(function(){{
+  var SHEET = {json.dumps(sheet)};
+  function advHierChanged(sel){{
+    var val = sel.value;
+    if(val){{
+      document.querySelectorAll("#adv-config-table .hier-sel").forEach(function(s){{
+        if(s !== sel && s.value === val) s.value = "";
+      }});
+    }}
+    advTableChanged();
+  }}
+  function advTableChanged(){{
+    var rows = document.querySelectorAll("#adv-config-table tbody tr[data-col]");
+    var colCfgs = {{}};
+    rows.forEach(function(row){{
+      var col     = row.dataset.col;
+      var hierSel = row.querySelector(".hier-sel");
+      var sepSel  = row.querySelector(".sep-sel");
+      var typeSel = row.querySelector(".type-sel");
+      var grpSel  = row.querySelector(".grp-sel");
+      colCfgs[col] = {{
+        hierarchy: (hierSel && hierSel.value) ? parseInt(hierSel.value) : null,
+        separator: sepSel  ? sepSel.value  : ";",
+        type:      typeSel ? typeSel.value : "auto",
+        group:     (grpSel && grpSel.value) ? grpSel.value : null
+      }};
+    }});
+    var payload = JSON.stringify({{sheet: SHEET, col_configs: colCfgs}});
+    var tb = document.querySelector("#adv-col-change-tb textarea, #adv-col-change-tb input");
+    if(tb){{
+      tb.value = payload;
+      tb.dispatchEvent(new Event("input",  {{bubbles:true}}));
+      tb.dispatchEvent(new Event("change", {{bubbles:true}}));
+    }}
+  }}
+  window.advHierChanged  = advHierChanged;
+  window.advTableChanged = advTableChanged;
+}})();
+</script>'''
+
+        return (
+            js_block
+            + f'<table id="adv-config-table" class="adv-table">'
+            + f'<thead><tr>'
+            + f'<th>Column</th><th>{hier_header}</th>'
+            + f'<th>Separator</th><th>Type</th><th>Group</th>'
+            + f'</tr></thead>'
+            + f'<tbody>{"".join(rows_html)}</tbody>'
+            + f'</table>'
+        )
+
+    def _init_adv_config(sel_list, prev_config=None):
+        import copy
+        adv_config = copy.deepcopy(prev_config) if prev_config else {"groups": [], "sheets": {}}
+        adv_config.setdefault("groups", [])
+        adv_config.setdefault("sheets", {})
+        for sheet in sel_list:
+            if sheet not in adv_config["sheets"] and sheet in conv.sheets_data:
+                cols = list(conv.sheets_data[sheet].columns)
+                adv_config["sheets"][sheet] = {
+                    "num_levels": 0,
+                    "title_col": cols[0] if cols else "",
+                    "col_configs": {
+                        col: {"hierarchy": None, "separator": ";", "type": "auto", "group": None}
+                        for col in cols
+                    }
+                }
+        return adv_config
+
+    def _sync_adv_to_conv(adv_config):
+        # 1. hierarchy_configs
+        new_hier = {}
+        for sheet, scfg in adv_config.get("sheets", {}).items():
+            hier_cols = [
+                (col, cfg["hierarchy"], cfg.get("separator", ";"))
+                for col, cfg in scfg.get("col_configs", {}).items()
+                if cfg.get("hierarchy") is not None
+            ]
+            hier_cols.sort(key=lambda x: x[1])
+            if hier_cols:
+                new_hier[sheet] = [{"col": c, "delim": s} for c, _, s in hier_cols]
+        conv.hierarchy_configs = new_hier
+
+        # 2. column_type_preferences
+        new_ctp = {}
+        for sheet, scfg in adv_config.get("sheets", {}).items():
+            prefs = {
+                col: cfg["type"]
+                for col, cfg in scfg.get("col_configs", {}).items()
+                if cfg.get("type", "auto") != "auto"
+            }
+            if prefs:
+                new_ctp[sheet] = prefs
+        conv.column_type_preferences = new_ctp
+
+        # 3. sheet_title_cols
+        new_stc = {}
+        for sheet, scfg in adv_config.get("sheets", {}).items():
+            tc = scfg.get("title_col", "")
+            if tc and sheet in conv.sheets_data and tc in conv.sheets_data[sheet].columns:
+                new_stc[sheet] = tc
+            elif sheet in conv.sheets_data:
+                cols = list(conv.sheets_data[sheet].columns)
+                if cols:
+                    new_stc[sheet] = cols[0]
+        conv.sheet_title_cols = new_stc
+
+        # 4. manual_grouping_rules from group column assignments
+        group_pairs = {}
+        for sheet, scfg in adv_config.get("sheets", {}).items():
+            for col, cfg in scfg.get("col_configs", {}).items():
+                grp = cfg.get("group")
+                if grp:
+                    group_pairs.setdefault(grp, []).append(
+                        (sheet, col, cfg.get("separator", ";"))
+                    )
+        conv.manual_grouping_rules = [
+            {"name": grp, "pairs": [(s, c) for s, c, _ in pairs],
+             "delimiter": pairs[0][2] if pairs else ";"}
+            for grp, pairs in group_pairs.items()
+        ]
+
+    def _rebuild_adv_from_conv(sel_list):
+        """Reconstruct adv_config from conv.* (used after template load)."""
+        adv_config = {"groups": [], "sheets": {}}
+        # groups from grouping rules
+        adv_config["groups"] = list({r.get("name", "Group") for r in conv.manual_grouping_rules})
+        # (sheet, col) -> group name
+        pair_to_group = {}
+        for rule in conv.manual_grouping_rules:
+            for s, c in rule.get("pairs", []):
+                pair_to_group[(s, c)] = rule.get("name", "Group")
+
+        for sheet in sel_list:
+            if sheet not in conv.sheets_data:
+                continue
+            cols = list(conv.sheets_data[sheet].columns)
+            hier_levels = conv.hierarchy_configs.get(sheet, [])
+            col_to_level = {}
+            col_to_sep   = {}
+            for i, lv in enumerate(hier_levels):
+                col  = lv["col"] if isinstance(lv, dict) else str(lv)
+                sep  = lv.get("delim", ";") if isinstance(lv, dict) else ";"
+                col_to_level[col] = i + 1
+                col_to_sep[col]   = sep
+            type_prefs = conv.column_type_preferences.get(sheet, {})
+            title_col  = conv.sheet_title_cols.get(sheet, cols[0] if cols else "")
+            col_configs = {}
+            for col in cols:
+                col_configs[col] = {
+                    "hierarchy": col_to_level.get(col),
+                    "separator": col_to_sep.get(col, ";"),
+                    "type":      type_prefs.get(col, "auto"),
+                    "group":     pair_to_group.get((sheet, col)),
+                }
+            adv_config["sheets"][sheet] = {
+                "num_levels": len(hier_levels),
+                "title_col":  title_col,
+                "col_configs": col_configs,
+            }
+        return adv_config
  
-    def toggle_mode(mode): return gr.update(visible=(mode == "Advanced"))
- 
-    def update_ui_after_load(ok, msg, sheets):
-        if not ok:
-            return msg, gr.update(choices=[]), gr.update(choices=[]), gr.update(choices=[]), gr.update(choices=[]), gr.update(choices=[]), "", [], [], invalidate(), gr.update(value=True), gr.update(choices=[]), gr.update(choices=[]), gr.update(choices=[]), []
- 
-        conv.selected_sheets = set([s for s in sheets if s != "structure"])
-        sel_list = sorted(list(conv.selected_sheets))
-        first = sel_list[0] if sel_list else None
-        new_root_state = (len(sel_list) > 1)
-        conv.use_file_root = new_root_state
- 
-        for s in sel_list:
-            if s in conv.sheets_data and not conv.sheet_title_cols.get(s):
-                cols = list(conv.sheets_data[s].columns)
-                if cols: conv.sheet_title_cols[s] = cols[0]
-        t_str = ""
-        if first and first in conv.sheets_data:
-            t_str = render_types_table(first, {}, list(conv.sheets_data[first].columns))
-        return (msg, gr.update(choices=sheets, value=list(conv.selected_sheets)), gr.update(choices=sel_list, value=first), gr.update(choices=sel_list, value=first), gr.update(choices=sel_list, value=first), gr.update(choices=sel_list, value=first), t_str, [], [], invalidate(), gr.update(value=new_root_state), gr.update(choices=sel_list, value=first), gr.update(choices=list(conv.sheets_data[first].columns) if first else []), gr.update(choices=sel_list, value=first), format_nt_df())
- 
-    def do_load_file(file):
-        if not file: return update_ui_after_load(False, "No file", [])
-        ok, msg, ch = conv.load_xlsx(file.name)
-        return update_ui_after_load(ok, msg, ch)
- 
-    def do_load_gs(url, json_txt):
-        ok, msg, ch = conv.load_gsheet(url, json_txt)
-        return update_ui_after_load(ok, msg, ch)
- 
+    # ── Mode toggle ───────────────────────────────────────────────
+    def toggle_mode(mode):
+        is_adv = (mode == "Advanced")
+        return gr.update(visible=not is_adv), gr.update(visible=is_adv)
+
+    # ── Simple-mode event handlers ────────────────────────────────
     def set_root_flag(val): conv.use_file_root = val; return invalidate()
- 
     def set_direction(val): conv.edge_direction = val; return invalidate()
- 
-    # NEW: handler for exclude-title checkbox
-    def set_exclude_title(val):
-        conv.exclude_title_from_data = val
-        return invalidate()
- 
+    def set_exclude_title(val): conv.exclude_title_from_data = val; return invalidate()
+    def set_l1(v): conv.use_prefix_l1 = v; return invalidate()
+    def set_deep(v): conv.use_prefix_deep = v; return invalidate()
+
     def on_hier_sheet_change(sheet):
         if not sheet or sheet not in conv.sheets_data: return gr.update(choices=[]), []
         cols = list(conv.sheets_data[sheet].columns)
         current = conv.hierarchy_configs.get(sheet, [])
-        used_cols = [x['col'] if isinstance(x, dict) else str(x) for x in current]
-        avail = [c for c in cols if c not in used_cols]
-        return gr.update(choices=avail), format_hier_df(sheet)
- 
+        used = [x['col'] if isinstance(x, dict) else str(x) for x in current]
+        return gr.update(choices=[c for c in cols if c not in used]), format_hier_df(sheet)
+
     def add_hier_level(sheet, col, delim):
         if not sheet or not col: return format_hier_df(sheet), gr.update(), invalidate()
         current = conv.hierarchy_configs.get(sheet, [])
-        d = None if delim == "No Separation" else delim
-        current.append({'col': col, 'delim': d})
+        current.append({'col': col, 'delim': None if delim == "No Separation" else delim})
         conv.hierarchy_configs[sheet] = current
         cols = list(conv.sheets_data[sheet].columns)
-        used_cols = [x['col'] if isinstance(x, dict) else str(x) for x in current]
-        avail = [c for c in cols if c not in used_cols]
-        return format_hier_df(sheet), gr.update(choices=avail, value=None), invalidate()
- 
+        used = [x['col'] if isinstance(x, dict) else str(x) for x in current]
+        return format_hier_df(sheet), gr.update(choices=[c for c in cols if c not in used], value=None), invalidate()
+
     hier_sel = gr.State(-1)
-    grp_sel = gr.State(-1)
- 
+
     def on_hier_select(evt: gr.SelectData): return evt.index[0]
- 
+
     def hier_delete(sheet, idx):
         if not sheet or idx < 0: return format_hier_df(sheet), gr.update(), invalidate()
         current = conv.hierarchy_configs.get(sheet, [])
-        if idx < len(current):
-            current.pop(idx)
-            conv.hierarchy_configs[sheet] = current
+        if idx < len(current): current.pop(idx)
+        conv.hierarchy_configs[sheet] = current
         cols = list(conv.sheets_data[sheet].columns)
-        used_cols = [x['col'] if isinstance(x, dict) else str(x) for x in current]
-        avail = [c for c in cols if c not in used_cols]
-        return format_hier_df(sheet), gr.update(choices=avail), invalidate()
- 
-    def hier_move(sheet, idx, direction):
+        used = [x['col'] if isinstance(x, dict) else str(x) for x in current]
+        return format_hier_df(sheet), gr.update(choices=[c for c in cols if c not in used]), invalidate()
+
+    def hier_move(sheet, idx, d):
         if not sheet: return format_hier_df(sheet), gr.update(), invalidate()
         cur = conv.hierarchy_configs.get(sheet, [])
         if not cur: return format_hier_df(sheet), gr.update(), invalidate()
-        if direction == "up" and idx > 0: cur[idx], cur[idx-1] = cur[idx-1], cur[idx]
-        elif direction == "down" and idx < len(cur)-1: cur[idx], cur[idx+1] = cur[idx+1], cur[idx]
+        if d == "up" and idx > 0: cur[idx], cur[idx-1] = cur[idx-1], cur[idx]
+        elif d == "down" and idx < len(cur)-1: cur[idx], cur[idx+1] = cur[idx+1], cur[idx]
         conv.hierarchy_configs[sheet] = cur
         return format_hier_df(sheet), gr.update(), invalidate()
- 
-    def set_l1(v): conv.use_prefix_l1 = v; return invalidate()
- 
-    def set_deep(v): conv.use_prefix_deep = v; return invalidate()
- 
-    def add_grp(name, entity, col, delim):
-        if not entity or not col: return format_grp_df(), invalidate()
-        d = None if delim == "No Separation" else delim
-        conv.manual_grouping_rules.append({"name": name or "Group", "pairs": [(entity, col)], "delimiter": d})
-        return format_grp_df(), invalidate()
- 
-    def on_grp_select(evt: gr.SelectData): return evt.index[0]
- 
-    def del_grp(idx):
-        if 0 <= idx < len(conv.manual_grouping_rules): conv.manual_grouping_rules.pop(idx)
-        return format_grp_df(), invalidate()
- 
-    def on_save_sel(sel):
+
+    # ── Advanced-mode event handlers ──────────────────────────────
+
+    def on_adv_col_change(change_json, adv_config):
+        """JS sends {sheet, col_configs} when any table dropdown changes."""
+        if not change_json or not change_json.strip():
+            return adv_config
+        try:
+            payload = json.loads(change_json)
+        except Exception:
+            return adv_config
+        sheet = payload.get("sheet", "")
+        col_configs = payload.get("col_configs", {})
+        if not sheet:
+            return adv_config
+        adv_config.setdefault("sheets", {})
+        adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "col_configs": {}})
+        # Preserve num_levels and title_col; only update col_configs
+        adv_config["sheets"][sheet]["col_configs"] = col_configs
+        return adv_config
+
+    def on_adv_sheet_change(sheet, adv_config):
+        """User clicks a different sheet tab — reload controls for that sheet."""
+        if not sheet or sheet not in conv.sheets_data:
+            return sheet, gr.update(value=0), gr.update(choices=[], value=None), \
+                   "<p style='color:#888'>Select a sheet.</p>"
+        scfg   = adv_config.get("sheets", {}).get(sheet, {})
+        n_lvl  = int(scfg.get("num_levels", 0))
+        t_col  = scfg.get("title_col", "")
+        cols   = list(conv.sheets_data[sheet].columns)
+        t_val  = t_col if t_col in cols else (cols[0] if cols else None)
+        return sheet, gr.update(value=n_lvl), gr.update(choices=cols, value=t_val), \
+               render_adv_table(sheet, adv_config)
+
+    def on_adv_num_levels(n, sheet, adv_config):
+        """User changes hierarchy-level count for the current sheet."""
+        if not sheet:
+            return adv_config, render_adv_table(sheet, adv_config)
+        n = int(n) if n is not None else 0
+        adv_config.setdefault("sheets", {})
+        adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "col_configs": {}})
+        adv_config["sheets"][sheet]["num_levels"] = n
+        # Clear hierarchy assignments above the new max
+        for cfg in adv_config["sheets"][sheet].get("col_configs", {}).values():
+            if cfg.get("hierarchy") and cfg["hierarchy"] > n:
+                cfg["hierarchy"] = None
+        return adv_config, render_adv_table(sheet, adv_config)
+
+    def on_adv_title_col(title_col, sheet, adv_config):
+        if not sheet or not title_col:
+            return adv_config
+        adv_config.setdefault("sheets", {})
+        adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "col_configs": {}})
+        adv_config["sheets"][sheet]["title_col"] = title_col
+        return adv_config
+
+    def on_adv_add_group(grp_name, sheet, adv_config):
+        grp_name = (grp_name or "").strip()
+        if not grp_name:
+            return adv_config, gr.update(), render_adv_groups(adv_config), \
+                   gr.update(), render_adv_table(sheet, adv_config)
+        adv_config.setdefault("groups", [])
+        if grp_name not in adv_config["groups"]:
+            adv_config["groups"].append(grp_name)
+        groups = adv_config["groups"]
+        return (adv_config, gr.update(value=""), render_adv_groups(adv_config),
+                gr.update(choices=groups, value=None), render_adv_table(sheet, adv_config))
+
+    def on_adv_del_group(grp_name, sheet, adv_config):
+        if not grp_name:
+            return adv_config, render_adv_groups(adv_config), gr.update(), \
+                   render_adv_table(sheet, adv_config)
+        if "groups" in adv_config and grp_name in adv_config["groups"]:
+            adv_config["groups"].remove(grp_name)
+        # Clear this group from all sheets
+        for scfg in adv_config.get("sheets", {}).values():
+            for cfg in scfg.get("col_configs", {}).values():
+                if cfg.get("group") == grp_name:
+                    cfg["group"] = None
+        groups = adv_config.get("groups", [])
+        return (adv_config, render_adv_groups(adv_config),
+                gr.update(choices=groups, value=None), render_adv_table(sheet, adv_config))
+
+    def on_adv_sheets_sel(sel, adv_config):
+        """Included-sheets CheckboxGroup changed in Advanced mode."""
         conv.selected_sheets = set(sel or [])
         new_choices = sorted(list(conv.selected_sheets))
-        conv.hierarchy_configs = {k: v for k, v in conv.hierarchy_configs.items() if k in new_choices}
-        conv.sheet_title_cols = {k: v for k, v in conv.sheet_title_cols.items() if k in new_choices}
-        return (gr.update(choices=new_choices, value=None), gr.update(choices=new_choices, value=None), gr.update(choices=new_choices, value=None), "", invalidate(), gr.update(choices=new_choices, value=None), format_nt_df())
- 
-    def on_types_tab(sheet, t_state):
-        if not sheet or sheet not in conv.sheets_data: return render_types_table(sheet, t_state, [])
-        return render_types_table(sheet, t_state, list(conv.sheets_data[sheet].columns))
- 
-    def render_types_table(sheet, state, cols):
-        if not sheet: return "Select sheet"
-        rows = []
-        prefs = state.get(sheet, {})
-        for c in cols:
-            cur = prefs.get(c, "auto")
-            opt = "".join(f'<option {"selected" if cur==t else ""}>{t}</option>' for t in TYPE_CHOICES)
-            rows.append(f"<tr><td>{c}</td><td><select>{opt}</select></td></tr>")
-        return f"<table>{chr(10).join(rows)}</table>"
- 
-    def on_nt_sheet_change(sheet):
-        if not sheet or sheet not in conv.sheets_data: return gr.update(choices=[])
-        return gr.update(choices=list(conv.sheets_data[sheet].columns))
- 
-    def set_node_title(sheet, col):
-        if sheet and col: conv.sheet_title_cols[sheet] = col
-        return format_nt_df(), invalidate()
- 
-    def gen_xml(mode_val, use_l1, use_deep, data_delim):
-        conv.use_prefix_l1 = use_l1
+        conv.hierarchy_configs   = {k: v for k, v in conv.hierarchy_configs.items()   if k in new_choices}
+        conv.sheet_title_cols    = {k: v for k, v in conv.sheet_title_cols.items()    if k in new_choices}
+        adv_config = _init_adv_config(new_choices, adv_config)
+        first = new_choices[0] if new_choices else None
+        cols  = list(conv.sheets_data[first].columns) if first and first in conv.sheets_data else []
+        t_val = adv_config.get("sheets", {}).get(first, {}).get("title_col", cols[0] if cols else None)
+        return (
+            gr.update(choices=new_choices, value=first),          # hier_sheet (simple)
+            adv_config,                                            # adv_state
+            first or "",                                           # adv_cur_sheet
+            gr.update(choices=new_choices, value=first),          # adv_sheet_radio
+            gr.update(choices=cols, value=t_val),                  # adv_title_col
+            render_adv_table(first, adv_config) if first else "", # adv_table_html
+            invalidate(),                                          # gen_file
+        )
+
+    # ── File-load handler ─────────────────────────────────────────
+
+    def _make_load_outputs(ok, msg, sheets):
+        """Build the tuple returned by both load handlers."""
+        if not ok:
+            empty = gr.update(choices=[])
+            return (msg, empty, empty, {"groups": [], "sheets": {}}, "",
+                    empty, gr.update(choices=[], value=None),
+                    "<p style='color:#888;font-size:13px'>No groups yet.</p>",
+                    "<p style='color:#888'>Load a file and select a sheet.</p>",
+                    gr.update(choices=[]), invalidate(), gr.update(value=True))
+
+        conv.selected_sheets = set(s for s in sheets if s != "structure")
+        sel_list     = sorted(conv.selected_sheets)
+        first        = sel_list[0] if sel_list else None
+        new_root     = len(sel_list) > 1
+        conv.use_file_root = new_root
+
+        for s in sel_list:
+            if s in conv.sheets_data and not conv.sheet_title_cols.get(s):
+                cols = list(conv.sheets_data[s].columns)
+                if cols: conv.sheet_title_cols[s] = cols[0]
+
+        adv_config = _init_adv_config(sel_list)
+        first_cols  = list(conv.sheets_data[first].columns) if first and first in conv.sheets_data else []
+        t_val       = adv_config.get("sheets", {}).get(first, {}).get("title_col",
+                          first_cols[0] if first_cols else None)
+        groups      = adv_config.get("groups", [])
+
+        return (
+            msg,                                                         # status
+            gr.update(choices=sheets, value=list(conv.selected_sheets)), # sheets_sel
+            gr.update(choices=sel_list, value=first),                   # hier_sheet
+            adv_config,                                                   # adv_state
+            first or "",                                                  # adv_cur_sheet
+            gr.update(choices=sel_list, value=first),                   # adv_sheet_radio
+            gr.update(choices=first_cols, value=t_val),                  # adv_title_col
+            render_adv_groups(adv_config),                               # adv_grp_display
+            render_adv_table(first, adv_config) if first else "",        # adv_table_html
+            gr.update(choices=groups),                                    # adv_grp_del_dropdown
+            invalidate(),                                                 # gen_file
+            gr.update(value=new_root),                                   # use_file_root_cb
+        )
+
+    def do_load_file(file):
+        if not file: return _make_load_outputs(False, "No file selected.", [])
+        ok, msg, ch = conv.load_xlsx(file.name)
+        return _make_load_outputs(ok, msg, ch)
+
+    def do_load_gs(url, json_txt):
+        ok, msg, ch = conv.load_gsheet(url, json_txt)
+        return _make_load_outputs(ok, msg, ch)
+
+    # ── Generate XML ──────────────────────────────────────────────
+
+    def gen_xml(mode_val, use_l1, use_deep, data_delim, adv_config):
+        conv.use_prefix_l1  = use_l1
         conv.use_prefix_deep = use_deep
         conv.data_delimiter = None if data_delim == "No Separation" else data_delim
+        if mode_val == "Advanced":
+            _sync_adv_to_conv(adv_config)
         try:
             conv.apply_groupings()
             path, n, m = conv.generate(mode_val)
@@ -1222,13 +1570,15 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             traceback.print_exc()
             return gr.update(visible=False), f"❌ **Error:** {str(e)}"
 
-    # ── TEMPLATE HANDLERS ──────────────────────────────────────
+    # ── Template handlers ─────────────────────────────────────────
 
     def tpl_init_save(login):
         if not (login or "").strip():
-            return gr.update(visible=False), gr.update(visible=False), gr.update(visible=False, value=False), "⚠️ Please enter a login before saving."
+            return gr.update(visible=False), gr.update(visible=False), gr.update(visible=False, value=False), \
+                   "⚠️ Please enter a login before saving."
         if not conv.loaded_sheets:
-            return gr.update(visible=False), gr.update(visible=False), gr.update(visible=False, value=False), "⚠️ Please load a file before saving a template."
+            return gr.update(visible=False), gr.update(visible=False), gr.update(visible=False, value=False), \
+                   "⚠️ Please load a file before saving a template."
         return gr.update(visible=True), gr.update(visible=False), gr.update(visible=False, value=False), ""
 
     def tpl_confirm_save(login, name, overwrite):
@@ -1236,164 +1586,185 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         if not login:
             return gr.update(visible=True), gr.update(visible=False), gr.update(), "⚠️ Login is required."
         if not conv.loaded_sheets:
-            return gr.update(visible=False), gr.update(visible=False), gr.update(), "⚠️ No file loaded — cannot save template."
-        name = (name or "").strip()
-        if not name:
-            name = f"template_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        all_tpls = _tmpl_load_all()
+            return gr.update(visible=False), gr.update(visible=False), gr.update(), "⚠️ No file loaded."
+        name = (name or "").strip() or f"template_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        all_tpls  = _tmpl_load_all()
         user_tpls = all_tpls.get(login, {})
         if name in user_tpls and not overwrite:
             return (gr.update(visible=True), gr.update(visible=True), gr.update(),
-                    f"⚠️ Template **{name}** already exists. Check 'Overwrite if exists' and click Confirm again.")
-        action_word = "overwritten" if (name in user_tpls and overwrite) else "saved"
-        entry = {
-            "created": datetime.datetime.now().isoformat(),
-            "structural_metadata": _tmpl_snapshot_structure(),
-            "config": _tmpl_collect_config(),
-        }
-        user_tpls[name] = entry
+                    f"⚠️ Template **{name}** already exists. Check 'Overwrite if exists' and confirm.")
+        word = "overwritten" if (name in user_tpls and overwrite) else "saved"
+        user_tpls[name] = {"created": datetime.datetime.now().isoformat(),
+                           "structural_metadata": _tmpl_snapshot_structure(),
+                           "config": _tmpl_collect_config()}
         all_tpls[login] = user_tpls
         _tmpl_save_all(all_tpls)
-        return gr.update(visible=False), gr.update(visible=False), gr.update(value=""), f"✅ Template **{name}** {action_word} successfully."
+        return gr.update(visible=False), gr.update(visible=False), gr.update(value=""), \
+               f"✅ Template **{name}** {word} successfully."
 
     def tpl_init_load(login):
         login = (login or "").strip()
         if not login:
-            return gr.update(visible=False), gr.update(visible=False), gr.update(choices=[]), "⚠️ Please enter a login before loading."
+            return gr.update(visible=False), gr.update(visible=False), gr.update(choices=[]), \
+                   "⚠️ Please enter a login before loading."
         if not conv.loaded_sheets:
-            return gr.update(visible=False), gr.update(visible=False), gr.update(choices=[]), "⚠️ Please load a file before applying a template."
-        all_tpls = _tmpl_load_all()
+            return gr.update(visible=False), gr.update(visible=False), gr.update(choices=[]), \
+                   "⚠️ Please load a file before applying a template."
+        all_tpls  = _tmpl_load_all()
         user_tpls = all_tpls.get(login, {})
         if not user_tpls:
-            return gr.update(visible=False), gr.update(visible=False), gr.update(choices=[]), f"ℹ️ No templates found for login **{login}**."
+            return gr.update(visible=False), gr.update(visible=False), gr.update(choices=[]), \
+                   f"ℹ️ No templates found for login **{login}**."
         names = sorted(user_tpls.keys())
         return gr.update(visible=True), gr.update(visible=False), gr.update(choices=names, value=names[0]), ""
 
     def tpl_apply_fn(login, tpl_name):
-        # 15 outputs: tpl_status, tpl_load_panel, sheets_sel, hier_sheet, hier_data,
-        # hier_add_col, nt_view, grp_data, direction, use_file_root_cb,
-        # exclude_title_cb, global_data_delim, gen_file, tpl_summary_accordion, tpl_summary
-
         def _noop(msg):
             return (msg, gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(), gr.update(), gr.update(visible=False), gr.update())
+                    gr.update(), gr.update(), gr.update(), gr.update(visible=False), gr.update())
 
         login = (login or "").strip()
         if not login or not tpl_name:
             return _noop("⚠️ Please select a template to apply.")
-        all_tpls = _tmpl_load_all()
-        template = all_tpls.get(login, {}).get(tpl_name)
+        template = _tmpl_load_all().get(login, {}).get(tpl_name)
         if not template:
             return _noop(f"⚠️ Template **{tpl_name}** not found for login **{login}**.")
 
         applied, skipped, match_type = _tmpl_apply(template)
-
         if match_type == "none":
-            return _noop(
-                f"❌ Template **{tpl_name}** is incompatible with the current file — "
-                f"fewer than half of the structural settings could be applied."
-            )
+            return _noop(f"❌ Template **{tpl_name}** is incompatible with the current file.")
 
-        # Build summary markdown
         parts = []
-        if applied:
-            parts.append("**Applied:**\n" + "\n".join(f"- {a}" for a in applied))
-        if skipped:
-            parts.append("**Skipped:**\n" + "\n".join(f"- {s}" for s in skipped))
+        if applied: parts.append("**Applied:**\n" + "\n".join(f"- {a}" for a in applied))
+        if skipped: parts.append("**Skipped:**\n" + "\n".join(f"- {s}" for s in skipped))
         summary_md = "\n\n".join(parts)
+        status_msg = (f"✅ Template **{tpl_name}** applied — {len(applied)} settings applied."
+                      if match_type == "full" else
+                      f"⚠️ Template **{tpl_name}** partially applied — {len(applied)} applied, {len(skipped)} skipped.")
 
-        if match_type == "full":
-            status_msg = f"✅ Template **{tpl_name}** applied — {len(applied)} settings applied."
-        else:
-            status_msg = (f"⚠️ Template **{tpl_name}** partially applied — "
-                          f"{len(applied)} applied, {len(skipped)} skipped.")
-
-        sel_list = sorted(list(conv.selected_sheets))
-        first = sel_list[0] if sel_list else None
+        sel_list   = sorted(conv.selected_sheets)
+        first      = sel_list[0] if sel_list else None
         hier_avail = []
         if first and first in conv.sheets_data:
-            all_c = list(conv.sheets_data[first].columns)
-            used_c = [lv["col"] if isinstance(lv, dict) else str(lv) for lv in conv.hierarchy_configs.get(first, [])]
+            all_c  = list(conv.sheets_data[first].columns)
+            used_c = [lv["col"] if isinstance(lv, dict) else str(lv)
+                      for lv in conv.hierarchy_configs.get(first, [])]
             hier_avail = [c for c in all_c if c not in used_c]
 
-        delim_val = conv.data_delimiter if conv.data_delimiter else "No Separation"
+        adv_config = _rebuild_adv_from_conv(sel_list)
+        first_cols = list(conv.sheets_data[first].columns) if first and first in conv.sheets_data else []
+        t_val      = adv_config.get("sheets", {}).get(first, {}).get("title_col",
+                         first_cols[0] if first_cols else None)
+        delim_val  = conv.data_delimiter if conv.data_delimiter else "No Separation"
 
         return (
-            status_msg,                                        # tpl_status
-            gr.update(visible=False),                          # tpl_load_panel
-            gr.update(value=sel_list),                         # sheets_sel
-            gr.update(value=first),                            # hier_sheet
-            format_hier_df(first),                             # hier_data
-            gr.update(choices=hier_avail),                     # hier_add_col
-            format_nt_df(),                                    # nt_view
-            format_grp_df(),                                   # grp_data
-            gr.update(value=conv.edge_direction),              # direction
-            gr.update(value=conv.use_file_root),               # use_file_root_cb
-            gr.update(value=conv.exclude_title_from_data),     # exclude_title_cb
-            gr.update(value=delim_val),                        # global_data_delim
-            invalidate(),                                      # gen_file
-            gr.update(visible=bool(summary_md)),               # tpl_summary_accordion
-            summary_md,                                        # tpl_summary
+            status_msg,                                             # tpl_status
+            gr.update(visible=False),                               # tpl_load_panel
+            gr.update(value=sel_list),                              # sheets_sel
+            gr.update(value=first),                                 # hier_sheet
+            format_hier_df(first),                                  # hier_data
+            gr.update(choices=hier_avail),                          # hier_add_col
+            gr.update(value=conv.edge_direction),                   # direction
+            gr.update(value=conv.use_file_root),                    # use_file_root_cb
+            gr.update(value=conv.exclude_title_from_data),          # exclude_title_cb
+            gr.update(value=delim_val),                             # global_data_delim
+            adv_config,                                             # adv_state
+            gr.update(choices=sel_list, value=first),               # adv_sheet_radio
+            render_adv_groups(adv_config),                          # adv_grp_display
+            render_adv_table(first, adv_config) if first else "",   # adv_table_html
+            gr.update(visible=bool(summary_md)),                    # tpl_summary_accordion
+            summary_md,                                             # tpl_summary
         )
 
-    # --- BINDINGS ---
-    mode_toggle.change(toggle_mode, inputs=[mode_toggle], outputs=[advanced_group])
-    use_file_root_cb.change(set_root_flag, inputs=[use_file_root_cb], outputs=[gen_file])
-    # NEW binding
-    exclude_title_cb.change(set_exclude_title, inputs=[exclude_title_cb], outputs=[gen_file])
-    direction.change(set_direction, inputs=[direction], outputs=[gen_file])
-    common_outputs = [status, sheets_sel, hier_sheet, grp_entity, types_tab_sheet, grp_entity, types_html, hier_data, grp_data, gen_file, use_file_root_cb, nt_sheet, nt_col, types_tab_sheet, nt_view]
-    load_file_btn.click(do_load_file, inputs=[up_file], outputs=common_outputs)
-    load_gs_btn.click(do_load_gs, inputs=[gs_url, gs_json], outputs=common_outputs)
- 
-    sheets_sel.change(on_save_sel, inputs=[sheets_sel], outputs=[hier_sheet, grp_entity, types_tab_sheet, types_html, gen_file, nt_sheet, nt_view])
-    hier_sheet.change(on_hier_sheet_change, inputs=[hier_sheet], outputs=[hier_add_col, hier_data])
-    hier_add_btn.click(add_hier_level, inputs=[hier_sheet, hier_add_col, hier_delim], outputs=[hier_data, hier_add_col, gen_file])
- 
-    hier_data.select(on_hier_select, None, hier_sel)
-    hier_up_btn.click(lambda s, i: hier_move(s, i, "up"), inputs=[hier_sheet, hier_sel], outputs=[hier_data, gen_file])
-    hier_down_btn.click(lambda s, i: hier_move(s, i, "down"), inputs=[hier_sheet, hier_sel], outputs=[hier_data, gen_file])
-    hier_del_btn.click(hier_delete, inputs=[hier_sheet, hier_sel], outputs=[hier_data, hier_add_col, gen_file])
- 
-    hier_show_class_l1.change(set_l1, inputs=[hier_show_class_l1], outputs=[gen_file])
-    hier_show_class_deep.change(set_deep, inputs=[hier_show_class_deep], outputs=[gen_file])
-    global_data_delim.change(invalidate, outputs=[gen_file])
- 
-    grp_entity.change(lambda s: gr.update(choices=list(conv.sheets_data[s].columns) if s in conv.sheets_data else []), inputs=[grp_entity], outputs=[grp_col])
-    grp_add_btn.click(add_grp, inputs=[grp_name, grp_entity, grp_col, grp_delim], outputs=[grp_data, gen_file])
-    grp_data.select(on_grp_select, None, grp_sel)
-    grp_del_btn.click(del_grp, inputs=[grp_sel], outputs=[grp_data, gen_file])
- 
-    nt_sheet.change(on_nt_sheet_change, inputs=[nt_sheet], outputs=[nt_col])
-    nt_btn.click(set_node_title, inputs=[nt_sheet, nt_col], outputs=[nt_view, gen_file])
-    types_tab_sheet.change(on_types_tab, inputs=[types_tab_sheet, types_state], outputs=[types_html])
-    gen_btn.click(gen_xml, inputs=[mode_toggle, hier_show_class_l1, hier_show_class_deep, global_data_delim], outputs=[gen_file, gen_status])
+    # ── BINDINGS ─────────────────────────────────────────────────
 
-    # ── TEMPLATE BINDINGS ──────────────────────────────────────
-    tpl_save_btn.click(
-        tpl_init_save,
-        inputs=[tpl_login],
-        outputs=[tpl_save_panel, tpl_load_panel, tpl_overwrite_cb, tpl_status],
-    )
-    tpl_confirm_save_btn.click(
-        tpl_confirm_save,
-        inputs=[tpl_login, tpl_name_input, tpl_overwrite_cb],
-        outputs=[tpl_save_panel, tpl_overwrite_cb, tpl_name_input, tpl_status],
-    )
-    tpl_load_btn.click(
-        tpl_init_load,
-        inputs=[tpl_login],
-        outputs=[tpl_load_panel, tpl_save_panel, tpl_list, tpl_status],
-    )
+    mode_toggle.change(toggle_mode, inputs=[mode_toggle],
+                       outputs=[step2_simple_row, advanced_group])
+
+    use_file_root_cb.change(set_root_flag,    inputs=[use_file_root_cb], outputs=[gen_file])
+    exclude_title_cb.change(set_exclude_title, inputs=[exclude_title_cb], outputs=[gen_file])
+    direction.change(set_direction,            inputs=[direction],        outputs=[gen_file])
+    global_data_delim.change(invalidate,                                  outputs=[gen_file])
+    hier_show_class_l1.change(set_l1,          inputs=[hier_show_class_l1], outputs=[gen_file])
+    hier_show_class_deep.change(set_deep,      inputs=[hier_show_class_deep], outputs=[gen_file])
+
+    # Common outputs for file-load events
+    _load_outs = [status, sheets_sel, hier_sheet, adv_state, adv_cur_sheet,
+                  adv_sheet_radio, adv_title_col, adv_grp_display, adv_table_html,
+                  adv_grp_del_dropdown, gen_file, use_file_root_cb]
+    load_file_btn.click(do_load_file, inputs=[up_file],          outputs=_load_outs)
+    load_gs_btn.click(  do_load_gs,  inputs=[gs_url, gs_json],   outputs=_load_outs)
+
+    # Simple-mode hierarchy
+    hier_sheet.change(on_hier_sheet_change, inputs=[hier_sheet], outputs=[hier_add_col, hier_data])
+    hier_add_btn.click(add_hier_level,      inputs=[hier_sheet, hier_add_col, hier_delim],
+                       outputs=[hier_data, hier_add_col, gen_file])
+    hier_data.select(on_hier_select, None, hier_sel)
+    hier_up_btn.click(  lambda s, i: hier_move(s, i, "up"),   inputs=[hier_sheet, hier_sel],
+                        outputs=[hier_data, gen_file])
+    hier_down_btn.click(lambda s, i: hier_move(s, i, "down"), inputs=[hier_sheet, hier_sel],
+                        outputs=[hier_data, gen_file])
+    hier_del_btn.click( hier_delete, inputs=[hier_sheet, hier_sel],
+                        outputs=[hier_data, hier_add_col, gen_file])
+
+    # Advanced mode — included sheets
+    sheets_sel.change(on_adv_sheets_sel,
+                      inputs=[sheets_sel, adv_state],
+                      outputs=[hier_sheet, adv_state, adv_cur_sheet,
+                               adv_sheet_radio, adv_title_col, adv_table_html, gen_file])
+
+    # Advanced mode — sheet tab switch
+    adv_sheet_radio.change(on_adv_sheet_change,
+                           inputs=[adv_sheet_radio, adv_state],
+                           outputs=[adv_cur_sheet, adv_num_levels, adv_title_col, adv_table_html])
+
+    # Advanced mode — hierarchy levels
+    adv_num_levels.change(on_adv_num_levels,
+                          inputs=[adv_num_levels, adv_cur_sheet, adv_state],
+                          outputs=[adv_state, adv_table_html])
+
+    # Advanced mode — title column
+    adv_title_col.change(on_adv_title_col,
+                         inputs=[adv_title_col, adv_cur_sheet, adv_state],
+                         outputs=[adv_state])
+
+    # Advanced mode — groups
+    adv_grp_add_btn.click(on_adv_add_group,
+                          inputs=[adv_grp_input, adv_cur_sheet, adv_state],
+                          outputs=[adv_state, adv_grp_input, adv_grp_display,
+                                   adv_grp_del_dropdown, adv_table_html])
+    adv_grp_del_btn.click(on_adv_del_group,
+                          inputs=[adv_grp_del_dropdown, adv_cur_sheet, adv_state],
+                          outputs=[adv_state, adv_grp_display, adv_grp_del_dropdown, adv_table_html])
+
+    # Advanced mode — JS table changes
+    adv_col_change.change(on_adv_col_change,
+                          inputs=[adv_col_change, adv_state],
+                          outputs=[adv_state])
+
+    # Generate
+    gen_btn.click(gen_xml,
+                  inputs=[mode_toggle, hier_show_class_l1, hier_show_class_deep,
+                          global_data_delim, adv_state],
+                  outputs=[gen_file, gen_status])
+
+    # ── Template bindings ─────────────────────────────────────────
+    tpl_save_btn.click(tpl_init_save, inputs=[tpl_login],
+                       outputs=[tpl_save_panel, tpl_load_panel, tpl_overwrite_cb, tpl_status])
+    tpl_confirm_save_btn.click(tpl_confirm_save,
+                               inputs=[tpl_login, tpl_name_input, tpl_overwrite_cb],
+                               outputs=[tpl_save_panel, tpl_overwrite_cb, tpl_name_input, tpl_status])
+    tpl_load_btn.click(tpl_init_load, inputs=[tpl_login],
+                       outputs=[tpl_load_panel, tpl_save_panel, tpl_list, tpl_status])
     tpl_confirm_load_btn.click(
         tpl_apply_fn,
         inputs=[tpl_login, tpl_list],
         outputs=[
             tpl_status, tpl_load_panel,
             sheets_sel, hier_sheet, hier_data, hier_add_col,
-            nt_view, grp_data, direction, use_file_root_cb,
-            exclude_title_cb, global_data_delim, gen_file,
+            direction, use_file_root_cb, exclude_title_cb, global_data_delim,
+            adv_state, adv_sheet_radio, adv_grp_display, adv_table_html,
             tpl_summary_accordion, tpl_summary,
         ],
     )
