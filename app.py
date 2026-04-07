@@ -807,6 +807,25 @@ def _tmpl_collect_config() -> dict:
     }
 
 
+def _auto_save():
+    """Silently persist current config to templates.json under '_autosave' key."""
+    if not conv.loaded_sheets:
+        return
+    try:
+        all_tpls = _tmpl_load_all()
+        user_tpls = all_tpls.get("_autosave", {})
+        name = conv.root_name or "session"
+        user_tpls[name] = {
+            "created": datetime.datetime.now().isoformat(),
+            "structural_metadata": _tmpl_snapshot_structure(),
+            "config": _tmpl_collect_config(),
+        }
+        all_tpls["_autosave"] = user_tpls
+        _tmpl_save_all(all_tpls)
+    except Exception:
+        pass  # Never disrupt the user on auto-save failure
+
+
 def _tmpl_apply(template: dict) -> tuple:
     """
     Apply a saved template to conv, respecting the current file structure.
@@ -1122,6 +1141,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         return invalidate()
  
     def on_hier_sheet_change(sheet):
+        _auto_save()  # persist before switching to a different sheet
         if not sheet or sheet not in conv.sheets_data: return gr.update(choices=[]), []
         cols = list(conv.sheets_data[sheet].columns)
         current = conv.hierarchy_configs.get(sheet, [])
@@ -1132,12 +1152,19 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     def add_hier_level(sheet, col, delim):
         if not sheet or not col: return format_hier_df(sheet), gr.update(), invalidate()
         current = conv.hierarchy_configs.get(sheet, [])
+        used_cols = [x['col'] if isinstance(x, dict) else str(x) for x in current]
+        if col in used_cols:
+            # Duplicate — silently reject, return unchanged state
+            cols = list(conv.sheets_data[sheet].columns)
+            avail = [c for c in cols if c not in used_cols]
+            return format_hier_df(sheet), gr.update(choices=avail, value=None), invalidate()
         d = None if delim == "No Separation" else delim
         current.append({'col': col, 'delim': d})
         conv.hierarchy_configs[sheet] = current
         cols = list(conv.sheets_data[sheet].columns)
         used_cols = [x['col'] if isinstance(x, dict) else str(x) for x in current]
         avail = [c for c in cols if c not in used_cols]
+        _auto_save()
         return format_hier_df(sheet), gr.update(choices=avail, value=None), invalidate()
  
     hier_sel = gr.State(-1)
@@ -1154,16 +1181,18 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         cols = list(conv.sheets_data[sheet].columns)
         used_cols = [x['col'] if isinstance(x, dict) else str(x) for x in current]
         avail = [c for c in cols if c not in used_cols]
+        _auto_save()
         return format_hier_df(sheet), gr.update(choices=avail), invalidate()
  
     def hier_move(sheet, idx, direction):
-        if not sheet: return format_hier_df(sheet), gr.update(), invalidate()
+        if not sheet: return format_hier_df(sheet), invalidate()
         cur = conv.hierarchy_configs.get(sheet, [])
-        if not cur: return format_hier_df(sheet), gr.update(), invalidate()
+        if not cur: return format_hier_df(sheet), invalidate()
         if direction == "up" and idx > 0: cur[idx], cur[idx-1] = cur[idx-1], cur[idx]
         elif direction == "down" and idx < len(cur)-1: cur[idx], cur[idx+1] = cur[idx+1], cur[idx]
         conv.hierarchy_configs[sheet] = cur
-        return format_hier_df(sheet), gr.update(), invalidate()
+        _auto_save()
+        return format_hier_df(sheet), invalidate()
  
     def set_l1(v): conv.use_prefix_l1 = v; return invalidate()
  
