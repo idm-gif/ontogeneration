@@ -759,6 +759,14 @@ textarea { height: 80px !important; }
 .sheet-btn-row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
 .sheet-btn { padding:6px 16px; border-radius:8px; border:2px solid #e5e7eb; background:#fff; cursor:pointer; font-size:13px; font-weight:500; color:#374151; transition:all 0.15s; }
 .sheet-btn.active { border-color:#2563eb; background:#eff6ff; color:#2563eb; }
+/* Sheet selector — browser-style tabs */
+#adv-sheet-radio { margin-bottom:0 !important; }
+#adv-sheet-radio > div > div { border-bottom:2px solid #e5e7eb !important; display:flex !important; flex-wrap:nowrap !important; overflow-x:auto !important; gap:0 !important; padding-bottom:0 !important; align-items:flex-end !important; }
+#adv-sheet-radio label { display:inline-flex !important; align-items:center !important; justify-content:center !important; padding:8px 20px !important; border:1px solid #e5e7eb !important; border-bottom:none !important; border-radius:8px 8px 0 0 !important; margin-right:3px !important; margin-bottom:-2px !important; cursor:pointer !important; background:#f3f4f6 !important; color:#6b7280 !important; font-size:13px !important; font-weight:500 !important; white-space:nowrap !important; transition:background 0.15s, color 0.15s !important; position:relative !important; z-index:1 !important; }
+#adv-sheet-radio label:hover { background:#e9ecef !important; color:#374151 !important; }
+#adv-sheet-radio label:has(input:checked) { background:#fff !important; color:#2563eb !important; border-color:#c7d2fe #c7d2fe #fff !important; font-weight:600 !important; box-shadow:0 -2px 0 0 #2563eb inset !important; }
+#adv-sheet-radio input[type=radio] { display:none !important; }
+#adv-sheet-radio > div > span { display:none !important; }
 """
  
 conv = Converter()
@@ -1059,16 +1067,15 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         gr.Markdown("### Sheet Configuration")
         gr.Markdown("Select a sheet to configure its columns — settings are saved per sheet.")
 
+        adv_sheet_radio = gr.Radio(choices=[], label="", elem_id="adv-sheet-radio")
+
         with gr.Row(elem_classes=["clean-row"]):
-            adv_sheet_radio = gr.Radio(choices=[], label="Select Sheet Configuration", scale=4)
             adv_num_levels = gr.Dropdown(
                 choices=[0, 1, 2, 3, 4, 5], value=0,
                 label="Number of Hierarchy Levels",
                 info="How many hierarchy levels are selectable in the table below.",
                 scale=2
             )
-
-        with gr.Row(elem_classes=["clean-row"]):
             adv_title_col = gr.Dropdown(choices=[], label="Title Column (node name)", scale=3)
 
         # The interactive configuration table (rendered as HTML with JS)
@@ -1415,6 +1422,14 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             return adv_config
         adv_config.setdefault("sheets", {})
         adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "col_configs": {}})
+        # Enforce unique hierarchy levels — last assignment wins
+        seen_levels = {}
+        for col, cfg in col_configs.items():
+            lvl = cfg.get("hierarchy")
+            if lvl is not None:
+                if lvl in seen_levels:
+                    col_configs[seen_levels[lvl]]["hierarchy"] = None
+                seen_levels[lvl] = col
         # Preserve num_levels and title_col; only update col_configs
         adv_config["sheets"][sheet]["col_configs"] = col_configs
         return adv_config
@@ -1563,7 +1578,6 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         if mode_val == "Advanced":
             _sync_adv_to_conv(adv_config)
         try:
-            conv.apply_groupings()
             path, n, m = conv.generate(mode_val)
             return gr.update(value=path, visible=True), f"✅ Success! {n} nodes, {m} edges generated."
         except Exception as e:
