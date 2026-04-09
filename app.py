@@ -1195,26 +1195,26 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
                 for i in range(1, num_levels + 1):
                     sel = "selected" if hier_val == i else ""
                     h_opts += f'<option value="{i}" {sel}>Level {i}</option>'
-                hier_cell = f'<select class="hier-sel" onchange="advHierChanged(this)">{h_opts}</select>'
+                hier_cell = f'<select class="hier-sel">{h_opts}</select>'
             else:
                 hier_cell = '<span style="color:#bbb;font-size:12px">set levels above</span>'
 
             # Separator cell
-            sep_cell = '<select class="sep-sel" onchange="advTableChanged()">'
+            sep_cell = '<select class="sep-sel">'
             for s in [";", ",", "|", "No Separation"]:
                 sel = "selected" if sep_val == s else ""
                 sep_cell += f'<option value="{s}" {sel}>{s}</option>'
             sep_cell += "</select>"
 
             # Type cell
-            type_cell = '<select class="type-sel" onchange="advTableChanged()">'
+            type_cell = '<select class="type-sel">'
             for t in TYPE_CHOICES:
                 sel = "selected" if type_val == t else ""
                 type_cell += f'<option value="{t}" {sel}>{t}</option>'
             type_cell += "</select>"
 
             # Group cell
-            grp_cell = '<select class="grp-sel" onchange="advTableChanged()">'
+            grp_cell = '<select class="grp-sel">'
             grp_cell += '<option value="">None</option>'
             for g in groups:
                 sel = "selected" if grp_val == g else ""
@@ -1232,53 +1232,26 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
                 f'</tr>'
             )
 
+        table_html = (
+            f'<table id="adv-config-table" class="adv-table">'
+            + f'<thead><tr>'
+            + f'<th>Column</th><th>{hier_header}</th>'
+            + f'<th>Separator</th><th>Type</th><th>Group</th>'
+            + f'</tr></thead>'
+            + f'<tbody>{"".join(rows_html)}</tbody>'
+            + f'</table>'
+        )
+        # Script placed AFTER the table so the table element exists when the
+        # script runs. Uses event delegation on the table itself — no inline
+        # onchange handlers needed, no global window.* exposure required.
         js_block = f'''<script>
 (function(){{
+  var tbl = document.getElementById("adv-config-table");
+  if(!tbl) return;
   var SHEET = {json.dumps(sheet)};
-  function updateHierDisabling(){{
-    var allSels = document.querySelectorAll("#adv-config-table .hier-sel");
-    // Pass 1: find first index where each level appears
-    var firstIdx = {{}};
-    allSels.forEach(function(s, idx){{
-      if(s.value && !(s.value in firstIdx)) firstIdx[s.value] = idx;
-    }});
-    // Pass 2: clear duplicates (keep only first occurrence)
-    var cleared = false;
-    allSels.forEach(function(s, idx){{
-      if(s.value && firstIdx[s.value] !== idx){{
-        s.value = "";
-        cleared = true;
-      }}
-    }});
-    // Pass 3: update disabled state
-    var used = {{}};
-    allSels.forEach(function(s){{ if(s.value) used[s.value] = true; }});
-    allSels.forEach(function(s){{
-      Array.from(s.options).forEach(function(opt){{
-        if(opt.value === ""){{
-          opt.disabled = false;
-        }} else if(opt.value === s.value){{
-          opt.disabled = false;
-        }} else {{
-          opt.disabled = !!used[opt.value];
-        }}
-      }});
-    }});
-    // Sync cleared duplicates to Python
-    if(cleared) setTimeout(advTableChanged, 50);
-  }}
-  function advHierChanged(sel){{
-    var val = sel.value;
-    if(val){{
-      document.querySelectorAll("#adv-config-table .hier-sel").forEach(function(s){{
-        if(s !== sel && s.value === val) s.value = "";
-      }});
-    }}
-    updateHierDisabling();
-    advTableChanged();
-  }}
-  function advTableChanged(){{
-    var rows = document.querySelectorAll("#adv-config-table tbody tr[data-col]");
+
+  function syncToServer(){{
+    var rows = tbl.querySelectorAll("tbody tr[data-col]");
     var colCfgs = {{}};
     rows.forEach(function(row){{
       var col     = row.dataset.col;
@@ -1301,22 +1274,69 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
       tb.dispatchEvent(new Event("change", {{bubbles:true}}));
     }}
   }}
-  window.advHierChanged  = advHierChanged;
-  window.advTableChanged = advTableChanged;
-  updateHierDisabling();
+
+  function enforceHierUnique(changedSel){{
+    var val = changedSel.value;
+    // Clear any other row that already has this level
+    if(val){{
+      tbl.querySelectorAll(".hier-sel").forEach(function(s){{
+        if(s !== changedSel && s.value === val) s.value = "";
+      }});
+    }}
+    // Rebuild disabled state across all hier dropdowns
+    var used = {{}};
+    tbl.querySelectorAll(".hier-sel").forEach(function(s){{
+      if(s.value) used[s.value] = true;
+    }});
+    tbl.querySelectorAll(".hier-sel").forEach(function(s){{
+      Array.from(s.options).forEach(function(opt){{
+        if(opt.value === "") {{
+          opt.disabled = false;       // None always selectable
+        }} else if(opt.value === s.value) {{
+          opt.disabled = false;       // Own current selection always enabled
+        }} else {{
+          opt.disabled = !!used[opt.value]; // Taken by another row → disabled
+        }}
+      }});
+    }});
+  }}
+
+  // Event delegation: one listener handles all selects inside the table
+  tbl.addEventListener("change", function(e){{
+    if(e.target.classList.contains("hier-sel")){{
+      enforceHierUnique(e.target);
+    }}
+    syncToServer();
+  }});
+
+  // On initial render: clear any pre-existing duplicates then apply disabling
+  (function initDedup(){{
+    // First-occurrence wins: clear later duplicates
+    var firstIdx = {{}};
+    var allH = tbl.querySelectorAll(".hier-sel");
+    var cleared = false;
+    allH.forEach(function(s, i){{
+      if(s.value){{
+        if(s.value in firstIdx){{ s.value = ""; cleared = true; }}
+        else firstIdx[s.value] = i;
+      }}
+    }});
+    // Apply disabled state based on cleaned selections
+    var used = {{}};
+    allH.forEach(function(s){{ if(s.value) used[s.value] = true; }});
+    allH.forEach(function(s){{
+      Array.from(s.options).forEach(function(opt){{
+        if(opt.value === "") opt.disabled = false;
+        else if(opt.value === s.value) opt.disabled = false;
+        else opt.disabled = !!used[opt.value];
+      }});
+    }});
+    if(cleared) setTimeout(syncToServer, 50);
+  }})();
 }})();
 </script>'''
 
-        return (
-            js_block
-            + f'<table id="adv-config-table" class="adv-table">'
-            + f'<thead><tr>'
-            + f'<th>Column</th><th>{hier_header}</th>'
-            + f'<th>Separator</th><th>Type</th><th>Group</th>'
-            + f'</tr></thead>'
-            + f'<tbody>{"".join(rows_html)}</tbody>'
-            + f'</table>'
-        )
+        return table_html + js_block
 
     def _init_adv_config(sel_list, prev_config=None):
         import copy
@@ -1492,29 +1512,33 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     def on_adv_col_change(change_json, adv_config):
         """JS sends {sheet, col_configs} when any table dropdown changes."""
         if not change_json or not change_json.strip():
-            return adv_config
+            return adv_config, gr.update()
         try:
             payload = json.loads(change_json)
         except Exception:
-            return adv_config
+            return adv_config, gr.update()
         sheet = payload.get("sheet", "")
         col_configs = payload.get("col_configs", {})
         if not sheet:
-            return adv_config
+            return adv_config, gr.update()
         adv_config.setdefault("sheets", {})
         adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "col_configs": {}})
         # Sanitize: enforce one column per hierarchy level (first-wins)
         _seen: set = set()
+        _corrected = False
         for _cfg in col_configs.values():
             _h = _cfg.get("hierarchy")
             if _h is not None:
                 if _h in _seen:
                     _cfg["hierarchy"] = None
+                    _corrected = True
                 else:
                     _seen.add(_h)
         # Preserve num_levels and title_col; only update col_configs
         adv_config["sheets"][sheet]["col_configs"] = col_configs
-        return adv_config
+        # Re-render table only when server corrected a duplicate
+        table_update = render_adv_table(sheet, adv_config) if _corrected else gr.update()
+        return adv_config, table_update
 
     def on_adv_sheet_change(sheet, adv_config):
         """User clicks a different sheet tab — reload controls for that sheet."""
@@ -1869,7 +1893,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     # Advanced mode — JS table changes
     adv_col_change.change(on_adv_col_change,
                           inputs=[adv_col_change, adv_state],
-                          outputs=[adv_state])
+                          outputs=[adv_state, adv_table_html])
 
     # Generate
     gen_btn.click(gen_xml,
