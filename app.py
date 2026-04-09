@@ -98,6 +98,9 @@ class Converter:
         # NEW: Exclude title column value from node data elements
         self.exclude_title_from_data: bool = True
  
+        # Per-sheet label mode: "v1" = path-prefixed (Male: Engineer), "v2" = value only
+        self.sheet_label_modes: dict[str, str] = {}
+ 
     @staticmethod
     def _clean_headers(headers) -> list[str]:
         res = []
@@ -141,6 +144,7 @@ class Converter:
         self.grouping_rules = []
         self.column_type_preferences = {}
         self.sheet_title_cols = {}
+        self.sheet_label_modes = {}
  
     # ------------------------------------------------------------------
     # NEW: Inject hyperlinks from openpyxl into a pandas DataFrame so that
@@ -459,14 +463,23 @@ class Converter:
             return self._enrich_from_row(match_row, lookup_df, source_sheet)
         return []
  
-    def _get_phantom(self, ctx: tuple, col: str, val: str) -> str:
+    def _get_phantom(self, ctx: tuple, col: str, val: str, parent_phantom: str = "", sheet: str = "") -> str:
         key = (ctx, col, val)
         if key in self.phantom_nodes: return self.phantom_nodes[key]
  
         is_level_1 = (len(ctx) == 0)
-        use_prefix = self.use_prefix_l1 if is_level_1 else self.use_prefix_deep
+        sheet_mode = self.sheet_label_modes.get(sheet) if sheet else None
+        if sheet_mode is not None:
+            # Advanced mode: V1 = path-prefixed (Male: Engineer), V2 = just value
+            if sheet_mode == "v1":
+                name = val if is_level_1 else f"{parent_phantom}: {val}"
+            else:
+                name = val
+        else:
+            # Simple / legacy mode: use column-name prefix flags
+            use_prefix = self.use_prefix_l1 if is_level_1 else self.use_prefix_deep
+            name = f"{col}: {val}" if use_prefix else val
  
-        name = f"{col}: {val}" if use_prefix else f"{val}"
         data_elements = self._enrich_phantom_data(col, val, ctx)
         if name in self.node_map:
             existing = self.node_map[name]
@@ -627,7 +640,9 @@ class Converter:
             sub_values = self._split_multi_value(val_str, level_delim)
  
             for sub_val in sub_values:
-                phantom_name = self._get_phantom(tuple(sorted([(c, str(v)) for c, v in current_filter.items()])), col, sub_val)
+                phantom_name = self._get_phantom(
+                    tuple(sorted([(c, str(v)) for c, v in current_filter.items()])),
+                    col, sub_val, parent_phantom=parent, sheet=sheet)
                 edge_exists = any(e.node1 == parent and e.node2 == phantom_name for e in self.edges)
                 if not edge_exists: self.edges.append(self._create_edge(parent, phantom_name))
                 nf = dict(current_filter)
@@ -638,7 +653,9 @@ class Converter:
             empty_mask = curr[col].isna() | (curr[col].astype(str).str.strip() == "")
             if empty_mask.any():
                 empty_val = "(empty)"
-                empty_name = self._get_phantom(tuple(sorted([(c, str(v)) for c, v in current_filter.items()])), col, empty_val)
+                empty_name = self._get_phantom(
+                    tuple(sorted([(c, str(v)) for c, v in current_filter.items()])),
+                    col, empty_val, parent_phantom=parent, sheet=sheet)
                 edge_exists = any(e.node1 == parent and e.node2 == empty_name for e in self.edges)
                 if not edge_exists: self.edges.append(self._create_edge(parent, empty_name))
                 nf = dict(current_filter)
@@ -817,6 +834,7 @@ def _tmpl_collect_config() -> dict:
         "use_prefix_deep": conv.use_prefix_deep,
         "use_file_root": conv.use_file_root,
         "exclude_title_from_data": conv.exclude_title_from_data,
+        "sheet_label_modes": conv.sheet_label_modes,
     }
 
 
@@ -931,6 +949,16 @@ def _tmpl_apply(template: dict) -> tuple:
             new_stc[sheet] = col
             applied.append(f"Title column `{sheet}` → `{col}`")
     conv.sheet_title_cols = new_stc
+
+    # ── sheet_label_modes ─────────────────────────────────────────
+    new_slm: dict = {}
+    for sheet, mode in config.get("sheet_label_modes", {}).items():
+        if sheet in current_meta:
+            new_slm[sheet] = mode
+            applied.append(f"Label mode `{sheet}` → `{mode}`")
+        else:
+            skipped.append(f"Sheet '{sheet}' not found — label mode skipped")
+    conv.sheet_label_modes = new_slm
 
     # ── manual_grouping_rules ─────────────────────────────────
     new_rules: list = []
@@ -1070,6 +1098,13 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
 
         with gr.Row(elem_classes=["clean-row"]):
             adv_title_col = gr.Dropdown(choices=[], label="Title Column (node name)", scale=3)
+            adv_label_mode = gr.Radio(
+                choices=["V1 (Prefixed)", "V2 (Simple)"],
+                value="V1 (Prefixed)",
+                label="Label Mode",
+                info="V1: path-prefixed labels (Male: Engineer: Senior). V2: value only (may merge identical labels).",
+                scale=2
+            )
 
         # The interactive configuration table (rendered as HTML with JS)
         adv_table_html = gr.HTML("<p style='color:#888'>Load a file and select a sheet.</p>")
@@ -1189,6 +1224,23 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         js_block = f'''<script>
 (function(){{
   var SHEET = {json.dumps(sheet)};
+  function updateHierDisabling(){{
+    var used = {{}};
+    document.querySelectorAll("#adv-config-table .hier-sel").forEach(function(s){{
+      if(s.value) used[s.value] = true;
+    }});
+    document.querySelectorAll("#adv-config-table .hier-sel").forEach(function(s){{
+      Array.from(s.options).forEach(function(opt){{
+        if(opt.value === ""){{
+          opt.disabled = false;
+        }} else if(opt.value === s.value){{
+          opt.disabled = false;
+        }} else {{
+          opt.disabled = !!used[opt.value];
+        }}
+      }});
+    }});
+  }}
   function advHierChanged(sel){{
     var val = sel.value;
     if(val){{
@@ -1196,6 +1248,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         if(s !== sel && s.value === val) s.value = "";
       }});
     }}
+    updateHierDisabling();
     advTableChanged();
   }}
   function advTableChanged(){{
@@ -1224,6 +1277,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
   }}
   window.advHierChanged  = advHierChanged;
   window.advTableChanged = advTableChanged;
+  updateHierDisabling();
 }})();
 </script>'''
 
@@ -1249,6 +1303,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
                 adv_config["sheets"][sheet] = {
                     "num_levels": 0,
                     "title_col": cols[0] if cols else "",
+                    "label_mode": "v1",
                     "col_configs": {
                         col: {"hierarchy": None, "separator": ";", "type": "auto", "group": None}
                         for col in cols
@@ -1309,6 +1364,12 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             for grp, pairs in group_pairs.items()
         ]
 
+        # 5. sheet_label_modes
+        new_slm = {}
+        for sheet, scfg in adv_config.get("sheets", {}).items():
+            new_slm[sheet] = scfg.get("label_mode", "v1")
+        conv.sheet_label_modes = new_slm
+
     def _rebuild_adv_from_conv(sel_list):
         """Reconstruct adv_config from conv.* (used after template load)."""
         adv_config = {"groups": [], "sheets": {}}
@@ -1345,6 +1406,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             adv_config["sheets"][sheet] = {
                 "num_levels": len(hier_levels),
                 "title_col":  title_col,
+                "label_mode": conv.sheet_label_modes.get(sheet, "v1"),
                 "col_configs": col_configs,
             }
         return adv_config
@@ -1423,13 +1485,17 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         """User clicks a different sheet tab — reload controls for that sheet."""
         if not sheet or sheet not in conv.sheets_data:
             return sheet, gr.update(value=0), gr.update(choices=[], value=None), \
+                   gr.update(value="V1 (Prefixed)"), \
                    "<p style='color:#888'>Select a sheet.</p>"
         scfg   = adv_config.get("sheets", {}).get(sheet, {})
         n_lvl  = int(scfg.get("num_levels", 0))
         t_col  = scfg.get("title_col", "")
+        label_mode = scfg.get("label_mode", "v1")
         cols   = list(conv.sheets_data[sheet].columns)
         t_val  = t_col if t_col in cols else (cols[0] if cols else None)
+        label_mode_ui = "V1 (Prefixed)" if label_mode == "v1" else "V2 (Simple)"
         return sheet, gr.update(value=n_lvl), gr.update(choices=cols, value=t_val), \
+               gr.update(value=label_mode_ui), \
                render_adv_table(sheet, adv_config)
 
     def on_adv_num_levels(n, sheet, adv_config):
@@ -1452,6 +1518,16 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         adv_config.setdefault("sheets", {})
         adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "col_configs": {}})
         adv_config["sheets"][sheet]["title_col"] = title_col
+        return adv_config
+
+    def on_adv_label_mode(mode_ui, sheet, adv_config):
+        """User switches V1/V2 label mode for the current sheet."""
+        if not sheet:
+            return adv_config
+        mode = "v1" if mode_ui == "V1 (Prefixed)" else "v2"
+        adv_config.setdefault("sheets", {})
+        adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "label_mode": "v1", "col_configs": {}})
+        adv_config["sheets"][sheet]["label_mode"] = mode
         return adv_config
 
     def on_adv_add_group(grp_name, sheet, adv_config):
@@ -1491,12 +1567,15 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         first = new_choices[0] if new_choices else None
         cols  = list(conv.sheets_data[first].columns) if first and first in conv.sheets_data else []
         t_val = adv_config.get("sheets", {}).get(first, {}).get("title_col", cols[0] if cols else None)
+        first_mode = adv_config.get("sheets", {}).get(first, {}).get("label_mode", "v1") if first else "v1"
+        first_label_mode_ui = "V1 (Prefixed)" if first_mode == "v1" else "V2 (Simple)"
         return (
             gr.update(choices=new_choices, value=first),          # hier_sheet (simple)
             adv_config,                                            # adv_state
             first or "",                                           # adv_cur_sheet
             gr.update(choices=new_choices, value=first),          # adv_sheet_radio
             gr.update(choices=cols, value=t_val),                  # adv_title_col
+            gr.update(value=first_label_mode_ui),                 # adv_label_mode
             render_adv_table(first, adv_config) if first else "", # adv_table_html
             invalidate(),                                          # gen_file
         )
@@ -1510,6 +1589,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             return (msg, empty, empty, {"groups": [], "sheets": {}}, "",
                     empty, gr.update(choices=[], value=None),
                     "<p style='color:#888;font-size:13px'>No groups yet.</p>",
+                    gr.update(value="V1 (Prefixed)"),
                     "<p style='color:#888'>Load a file and select a sheet.</p>",
                     gr.update(choices=[]), invalidate(), gr.update(value=True))
 
@@ -1539,6 +1619,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             gr.update(choices=sel_list, value=first),                   # adv_sheet_radio
             gr.update(choices=first_cols, value=t_val),                  # adv_title_col
             render_adv_groups(adv_config),                               # adv_grp_display
+            gr.update(value="V1 (Prefixed)"),                            # adv_label_mode
             render_adv_table(first, adv_config) if first else "",        # adv_table_html
             gr.update(choices=groups),                                    # adv_grp_del_dropdown
             invalidate(),                                                 # gen_file
@@ -1622,7 +1703,8 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         def _noop(msg):
             return (msg, gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(), gr.update(), gr.update(), gr.update(visible=False), gr.update())
+                    gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(visible=False), gr.update())
 
         login = (login or "").strip()
         if not login or not tpl_name:
@@ -1658,6 +1740,8 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
                          first_cols[0] if first_cols else None)
         delim_val  = conv.data_delimiter if conv.data_delimiter else "No Separation"
 
+        first_label_mode = conv.sheet_label_modes.get(first, "v1") if first else "v1"
+        first_label_mode_ui = "V1 (Prefixed)" if first_label_mode == "v1" else "V2 (Simple)"
         return (
             status_msg,                                             # tpl_status
             gr.update(visible=False),                               # tpl_load_panel
@@ -1673,6 +1757,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             gr.update(choices=sel_list, value=first),               # adv_sheet_radio
             render_adv_groups(adv_config),                          # adv_grp_display
             render_adv_table(first, adv_config) if first else "",   # adv_table_html
+            gr.update(value=first_label_mode_ui),                   # adv_label_mode
             gr.update(visible=bool(summary_md)),                    # tpl_summary_accordion
             summary_md,                                             # tpl_summary
         )
@@ -1691,7 +1776,8 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
 
     # Common outputs for file-load events
     _load_outs = [status, sheets_sel, hier_sheet, adv_state, adv_cur_sheet,
-                  adv_sheet_radio, adv_title_col, adv_grp_display, adv_table_html,
+                  adv_sheet_radio, adv_title_col, adv_grp_display,
+                  adv_label_mode, adv_table_html,
                   adv_grp_del_dropdown, gen_file, use_file_root_cb]
     load_file_btn.click(do_load_file, inputs=[up_file],          outputs=_load_outs)
     load_gs_btn.click(  do_load_gs,  inputs=[gs_url, gs_json],   outputs=_load_outs)
@@ -1712,12 +1798,14 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     sheets_sel.change(on_adv_sheets_sel,
                       inputs=[sheets_sel, adv_state],
                       outputs=[hier_sheet, adv_state, adv_cur_sheet,
-                               adv_sheet_radio, adv_title_col, adv_table_html, gen_file])
+                               adv_sheet_radio, adv_title_col,
+                               adv_label_mode, adv_table_html, gen_file])
 
     # Advanced mode — sheet tab switch
     adv_sheet_radio.change(on_adv_sheet_change,
                            inputs=[adv_sheet_radio, adv_state],
-                           outputs=[adv_cur_sheet, adv_num_levels, adv_title_col, adv_table_html])
+                           outputs=[adv_cur_sheet, adv_num_levels, adv_title_col,
+                                    adv_label_mode, adv_table_html])
 
     # Advanced mode — hierarchy levels
     adv_num_levels.change(on_adv_num_levels,
@@ -1728,6 +1816,11 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     adv_title_col.change(on_adv_title_col,
                          inputs=[adv_title_col, adv_cur_sheet, adv_state],
                          outputs=[adv_state])
+
+    # Advanced mode — label mode
+    adv_label_mode.change(on_adv_label_mode,
+                          inputs=[adv_label_mode, adv_cur_sheet, adv_state],
+                          outputs=[adv_state])
 
     # Advanced mode — groups
     adv_grp_add_btn.click(on_adv_add_group,
@@ -1765,6 +1858,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             sheets_sel, hier_sheet, hier_data, hier_add_col,
             direction, use_file_root_cb, exclude_title_cb, global_data_delim,
             adv_state, adv_sheet_radio, adv_grp_display, adv_table_html,
+            adv_label_mode,
             tpl_summary_accordion, tpl_summary,
         ],
     )
