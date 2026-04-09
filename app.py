@@ -1632,7 +1632,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             gr.update(choices=groups),                                    # adv_grp_del_dropdown
             invalidate(),                                                 # gen_file
             gr.update(value=new_root),                                   # use_file_root_cb
-        )
+        ) + tuple(_level_col_updates(first, adv_config, int(adv_config.get("sheets", {}).get(first, {}).get("num_levels", 0))) if first else [gr.update(visible=False)] * MAX_LEVELS)
 
     def do_load_file(file):
         if not file: return _make_load_outputs(False, "No file selected.", [])
@@ -1712,7 +1712,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             return (msg, gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(visible=False), gr.update())
+                    gr.update(visible=False), gr.update()) + tuple(gr.update() for _ in range(MAX_LEVELS))
 
         login = (login or "").strip()
         if not login or not tpl_name:
@@ -1750,6 +1750,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
 
         first_label_mode = conv.sheet_label_modes.get(first, "v1") if first else "v1"
         first_label_mode_ui = "V1 (Prefixed)" if first_label_mode == "v1" else "V2 (Simple)"
+        first_n_lvl = int(adv_config.get("sheets", {}).get(first, {}).get("num_levels", 0)) if first else 0
         return (
             status_msg,                                             # tpl_status
             gr.update(visible=False),                               # tpl_load_panel
@@ -1768,7 +1769,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             gr.update(value=first_label_mode_ui),                   # adv_label_mode
             gr.update(visible=bool(summary_md)),                    # tpl_summary_accordion
             summary_md,                                             # tpl_summary
-        )
+        ) + tuple(_level_col_updates(first, adv_config, first_n_lvl) if first else [gr.update(visible=False)] * MAX_LEVELS)
 
     # ── BINDINGS ─────────────────────────────────────────────────
 
@@ -1786,7 +1787,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     _load_outs = [status, sheets_sel, hier_sheet, adv_state, adv_cur_sheet,
                   adv_sheet_radio, adv_title_col, adv_grp_display,
                   adv_label_mode, adv_table_html,
-                  adv_grp_del_dropdown, gen_file, use_file_root_cb]
+                  adv_grp_del_dropdown, gen_file, use_file_root_cb] + adv_level_cols
     load_file_btn.click(do_load_file, inputs=[up_file],          outputs=_load_outs)
     load_gs_btn.click(  do_load_gs,  inputs=[gs_url, gs_json],   outputs=_load_outs)
 
@@ -1807,18 +1808,18 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
                       inputs=[sheets_sel, adv_state],
                       outputs=[hier_sheet, adv_state, adv_cur_sheet,
                                adv_sheet_radio, adv_title_col,
-                               adv_label_mode, adv_table_html, gen_file])
+                               adv_label_mode, adv_table_html, gen_file] + adv_level_cols)
 
     # Advanced mode — sheet tab switch
     adv_sheet_radio.change(on_adv_sheet_change,
                            inputs=[adv_sheet_radio, adv_state],
                            outputs=[adv_cur_sheet, adv_num_levels, adv_title_col,
-                                    adv_label_mode, adv_table_html])
+                                    adv_label_mode, adv_table_html] + adv_level_cols)
 
     # Advanced mode — hierarchy levels
     adv_num_levels.change(on_adv_num_levels,
                           inputs=[adv_num_levels, adv_cur_sheet, adv_state],
-                          outputs=[adv_state, adv_table_html])
+                          outputs=[adv_state, adv_table_html] + adv_level_cols)
 
     # Advanced mode — title column
     adv_title_col.change(on_adv_title_col,
@@ -1842,7 +1843,16 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     # Advanced mode — JS table changes
     adv_col_change.change(on_adv_col_change,
                           inputs=[adv_col_change, adv_state],
-                          outputs=[adv_state, adv_table_html])
+                          outputs=[adv_state])
+
+    # Advanced mode — level-column dropdowns
+    for _li, _dd in enumerate(adv_level_cols):
+        _level_num = _li + 1
+        _dd.change(
+            lambda col, sheet, adv_config, ln=_level_num: on_adv_level_col(ln, col, sheet, adv_config),
+            inputs=[_dd, adv_cur_sheet, adv_state],
+            outputs=[adv_state] + adv_level_cols
+        )
 
     # Generate
     gen_btn.click(gen_xml,
@@ -1868,7 +1878,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             adv_state, adv_sheet_radio, adv_grp_display, adv_table_html,
             adv_label_mode,
             tpl_summary_accordion, tpl_summary,
-        ],
+        ] + adv_level_cols,
     )
 
     app.load(None, None, gs_json, js="() => localStorage.getItem('gs_creds') || ''")
