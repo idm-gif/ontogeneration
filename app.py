@@ -1168,6 +1168,17 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         groups = adv_config.get("groups", [])
         cols = list(conv.sheets_data[sheet].columns)
 
+        # Sanitize: enforce one column per hierarchy level (first-wins)
+        _seen_levels: set = set()
+        for _col in cols:
+            _cfg = col_configs.get(_col, {})
+            _h = _cfg.get("hierarchy")
+            if _h is not None:
+                if _h in _seen_levels:
+                    _cfg["hierarchy"] = None
+                else:
+                    _seen_levels.add(_h)
+
         hier_header = f"Hierarchy (1–{num_levels})" if num_levels > 0 else "Hierarchy Level"
 
         rows_html = []
@@ -1225,11 +1236,24 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
 (function(){{
   var SHEET = {json.dumps(sheet)};
   function updateHierDisabling(){{
-    var used = {{}};
-    document.querySelectorAll("#adv-config-table .hier-sel").forEach(function(s){{
-      if(s.value) used[s.value] = true;
+    var allSels = document.querySelectorAll("#adv-config-table .hier-sel");
+    // Pass 1: find first index where each level appears
+    var firstIdx = {{}};
+    allSels.forEach(function(s, idx){{
+      if(s.value && !(s.value in firstIdx)) firstIdx[s.value] = idx;
     }});
-    document.querySelectorAll("#adv-config-table .hier-sel").forEach(function(s){{
+    // Pass 2: clear duplicates (keep only first occurrence)
+    var cleared = false;
+    allSels.forEach(function(s, idx){{
+      if(s.value && firstIdx[s.value] !== idx){{
+        s.value = "";
+        cleared = true;
+      }}
+    }});
+    // Pass 3: update disabled state
+    var used = {{}};
+    allSels.forEach(function(s){{ if(s.value) used[s.value] = true; }});
+    allSels.forEach(function(s){{
       Array.from(s.options).forEach(function(opt){{
         if(opt.value === ""){{
           opt.disabled = false;
@@ -1240,6 +1264,8 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         }}
       }});
     }});
+    // Sync cleared duplicates to Python
+    if(cleared) setTimeout(advTableChanged, 50);
   }}
   function advHierChanged(sel){{
     var val = sel.value;
@@ -1477,6 +1503,15 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             return adv_config
         adv_config.setdefault("sheets", {})
         adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "col_configs": {}})
+        # Sanitize: enforce one column per hierarchy level (first-wins)
+        _seen: set = set()
+        for _cfg in col_configs.values():
+            _h = _cfg.get("hierarchy")
+            if _h is not None:
+                if _h in _seen:
+                    _cfg["hierarchy"] = None
+                else:
+                    _seen.add(_h)
         # Preserve num_levels and title_col; only update col_configs
         adv_config["sheets"][sheet]["col_configs"] = col_configs
         return adv_config
