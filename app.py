@@ -41,6 +41,7 @@ except ImportError:
  
 TYPE_CHOICES = ["auto", "text", "link", "image", "youtube"]
 DELIMITER_CHOICES = [";", ",", "|", "No Separation"]
+MAX_LEVELS = 5
  
  
 class GraphNode:
@@ -1092,9 +1093,19 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             adv_num_levels = gr.Dropdown(
                 choices=[0, 1, 2, 3, 4, 5], value=0,
                 label="Number of Hierarchy Levels",
-                info="How many hierarchy levels are selectable in the table below.",
+                info="How many hierarchy levels to assign.",
                 scale=2
             )
+
+        with gr.Row(elem_classes=["clean-row"]):
+            adv_level_cols = []
+            for _li in range(1, MAX_LEVELS + 1):
+                _dd = gr.Dropdown(
+                    choices=["None"], value="None",
+                    label=f"Level {_li} Column",
+                    visible=False, scale=1, interactive=True
+                )
+                adv_level_cols.append(_dd)
 
         with gr.Row(elem_classes=["clean-row"]):
             adv_title_col = gr.Dropdown(choices=[], label="Title Column (node name)", scale=3)
@@ -1163,41 +1174,16 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             return "<p style='color:#888'>Load a file and select a sheet to configure.</p>"
 
         sheet_cfg = adv_config.get("sheets", {}).get(sheet, {})
-        num_levels = int(sheet_cfg.get("num_levels", 0))
         col_configs = sheet_cfg.get("col_configs", {})
         groups = adv_config.get("groups", [])
         cols = list(conv.sheets_data[sheet].columns)
 
-        # Sanitize: enforce one column per hierarchy level (first-wins)
-        _seen_levels: set = set()
-        for _col in cols:
-            _cfg = col_configs.get(_col, {})
-            _h = _cfg.get("hierarchy")
-            if _h is not None:
-                if _h in _seen_levels:
-                    _cfg["hierarchy"] = None
-                else:
-                    _seen_levels.add(_h)
-
-        hier_header = f"Hierarchy (1–{num_levels})" if num_levels > 0 else "Hierarchy Level"
-
         rows_html = []
         for col in cols:
             cfg = col_configs.get(col, {})
-            hier_val = cfg.get("hierarchy")
             sep_val  = cfg.get("separator", ";")
             type_val = cfg.get("type", "auto")
             grp_val  = cfg.get("group") or ""
-
-            # Hierarchy cell
-            if num_levels > 0:
-                h_opts = '<option value="">None</option>'
-                for i in range(1, num_levels + 1):
-                    sel = "selected" if hier_val == i else ""
-                    h_opts += f'<option value="{i}" {sel}>Level {i}</option>'
-                hier_cell = f'<select class="hier-sel">{h_opts}</select>'
-            else:
-                hier_cell = '<span style="color:#bbb;font-size:12px">set levels above</span>'
 
             # Separator cell
             sep_cell = '<select class="sep-sel">'
@@ -1225,7 +1211,6 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
             rows_html.append(
                 f'<tr data-col="{safe_col}">'
                 f'<td class="adv-col-name">{col}</td>'
-                f'<td>{hier_cell}</td>'
                 f'<td>{sep_cell}</td>'
                 f'<td>{type_cell}</td>'
                 f'<td>{grp_cell}</td>'
@@ -1235,15 +1220,11 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         table_html = (
             f'<table id="adv-config-table" class="adv-table">'
             + f'<thead><tr>'
-            + f'<th>Column</th><th>{hier_header}</th>'
-            + f'<th>Separator</th><th>Type</th><th>Group</th>'
+            + f'<th>Column</th><th>Separator</th><th>Type</th><th>Group</th>'
             + f'</tr></thead>'
             + f'<tbody>{"".join(rows_html)}</tbody>'
             + f'</table>'
         )
-        # Script placed AFTER the table so the table element exists when the
-        # script runs. Uses event delegation on the table itself — no inline
-        # onchange handlers needed, no global window.* exposure required.
         js_block = f'''<script>
 (function(){{
   var tbl = document.getElementById("adv-config-table");
@@ -1255,12 +1236,10 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     var colCfgs = {{}};
     rows.forEach(function(row){{
       var col     = row.dataset.col;
-      var hierSel = row.querySelector(".hier-sel");
       var sepSel  = row.querySelector(".sep-sel");
       var typeSel = row.querySelector(".type-sel");
       var grpSel  = row.querySelector(".grp-sel");
       colCfgs[col] = {{
-        hierarchy: (hierSel && hierSel.value) ? parseInt(hierSel.value) : null,
         separator: sepSel  ? sepSel.value  : ";",
         type:      typeSel ? typeSel.value : "auto",
         group:     (grpSel && grpSel.value) ? grpSel.value : null
@@ -1275,68 +1254,28 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     }}
   }}
 
-  function enforceHierUnique(changedSel){{
-    var val = changedSel.value;
-    // Clear any other row that already has this level
-    if(val){{
-      tbl.querySelectorAll(".hier-sel").forEach(function(s){{
-        if(s !== changedSel && s.value === val) s.value = "";
-      }});
-    }}
-    // Rebuild disabled state across all hier dropdowns
-    var used = {{}};
-    tbl.querySelectorAll(".hier-sel").forEach(function(s){{
-      if(s.value) used[s.value] = true;
-    }});
-    tbl.querySelectorAll(".hier-sel").forEach(function(s){{
-      Array.from(s.options).forEach(function(opt){{
-        if(opt.value === "") {{
-          opt.disabled = false;       // None always selectable
-        }} else if(opt.value === s.value) {{
-          opt.disabled = false;       // Own current selection always enabled
-        }} else {{
-          opt.disabled = !!used[opt.value]; // Taken by another row → disabled
-        }}
-      }});
-    }});
-  }}
-
-  // Event delegation: one listener handles all selects inside the table
-  tbl.addEventListener("change", function(e){{
-    if(e.target.classList.contains("hier-sel")){{
-      enforceHierUnique(e.target);
-    }}
-    syncToServer();
-  }});
-
-  // On initial render: clear any pre-existing duplicates then apply disabling
-  (function initDedup(){{
-    // First-occurrence wins: clear later duplicates
-    var firstIdx = {{}};
-    var allH = tbl.querySelectorAll(".hier-sel");
-    var cleared = false;
-    allH.forEach(function(s, i){{
-      if(s.value){{
-        if(s.value in firstIdx){{ s.value = ""; cleared = true; }}
-        else firstIdx[s.value] = i;
-      }}
-    }});
-    // Apply disabled state based on cleaned selections
-    var used = {{}};
-    allH.forEach(function(s){{ if(s.value) used[s.value] = true; }});
-    allH.forEach(function(s){{
-      Array.from(s.options).forEach(function(opt){{
-        if(opt.value === "") opt.disabled = false;
-        else if(opt.value === s.value) opt.disabled = false;
-        else opt.disabled = !!used[opt.value];
-      }});
-    }});
-    if(cleared) setTimeout(syncToServer, 50);
-  }})();
+  tbl.addEventListener("change", syncToServer);
 }})();
 </script>'''
-
         return table_html + js_block
+
+    def _level_col_updates(sheet, adv_config, num_levels):
+        """Return MAX_LEVELS gr.update() objects for the level-column dropdowns."""
+        cols = list(conv.sheets_data[sheet].columns) if sheet and sheet in conv.sheets_data else []
+        level_to_col = {}
+        if sheet:
+            for col, cfg in adv_config.get("sheets", {}).get(sheet, {}).get("col_configs", {}).items():
+                h = cfg.get("hierarchy")
+                if h is not None and 1 <= h <= MAX_LEVELS:
+                    level_to_col[h] = col
+        updates = []
+        for i in range(1, MAX_LEVELS + 1):
+            assigned = level_to_col.get(i)
+            other_assigned = {c for lvl, c in level_to_col.items() if lvl != i}
+            choices = ["None"] + [c for c in cols if c not in other_assigned]
+            value = assigned if (assigned and assigned in cols) else "None"
+            updates.append(gr.update(choices=choices, value=value, visible=(i <= num_levels)))
+        return updates
 
     def _init_adv_config(sel_list, prev_config=None):
         import copy
@@ -1510,35 +1449,44 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
     # ── Advanced-mode event handlers ──────────────────────────────
 
     def on_adv_col_change(change_json, adv_config):
-        """JS sends {sheet, col_configs} when any table dropdown changes."""
+        """JS sends {sheet, col_configs} when any table dropdown changes (sep/type/group only)."""
         if not change_json or not change_json.strip():
-            return adv_config, gr.update()
+            return adv_config
         try:
-            payload = json.loads(change_json)
+            data = json.loads(change_json)
         except Exception:
-            return adv_config, gr.update()
-        sheet = payload.get("sheet", "")
-        col_configs = payload.get("col_configs", {})
+            return adv_config
+        sheet = data.get("sheet", "")
+        col_configs_incoming = data.get("col_configs", {})
         if not sheet:
-            return adv_config, gr.update()
+            return adv_config
         adv_config.setdefault("sheets", {})
-        adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "col_configs": {}})
-        # Sanitize: enforce one column per hierarchy level (first-wins)
-        _seen: set = set()
-        _corrected = False
-        for _cfg in col_configs.values():
-            _h = _cfg.get("hierarchy")
-            if _h is not None:
-                if _h in _seen:
-                    _cfg["hierarchy"] = None
-                    _corrected = True
-                else:
-                    _seen.add(_h)
-        # Preserve num_levels and title_col; only update col_configs
-        adv_config["sheets"][sheet]["col_configs"] = col_configs
-        # Re-render table only when server corrected a duplicate
-        table_update = render_adv_table(sheet, adv_config) if _corrected else gr.update()
-        return adv_config, table_update
+        adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "label_mode": "v1", "col_configs": {}})
+        existing = adv_config["sheets"][sheet]["col_configs"]
+        for col, new_cfg in col_configs_incoming.items():
+            if col not in existing:
+                existing[col] = {"hierarchy": None, "separator": ";", "type": "auto", "group": None}
+            existing[col]["separator"] = new_cfg.get("separator", existing[col].get("separator", ";"))
+            existing[col]["type"]      = new_cfg.get("type",      existing[col].get("type", "auto"))
+            existing[col]["group"]     = new_cfg.get("group",     existing[col].get("group"))
+        return adv_config
+
+    def on_adv_level_col(level_idx, col_choice, sheet, adv_config):
+        """User changed which column is assigned to hierarchy level `level_idx`."""
+        if not sheet:
+            return (adv_config,) + tuple(gr.update() for _ in range(MAX_LEVELS))
+        adv_config.setdefault("sheets", {})
+        adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "label_mode": "v1", "col_configs": {}})
+        col_configs = adv_config["sheets"][sheet]["col_configs"]
+        # Clear this level from whichever column currently holds it
+        for cfg in col_configs.values():
+            if cfg.get("hierarchy") == level_idx:
+                cfg["hierarchy"] = None
+        # Assign the chosen column to this level
+        if col_choice and col_choice != "None" and col_choice in col_configs:
+            col_configs[col_choice]["hierarchy"] = level_idx
+        num_levels = adv_config["sheets"][sheet].get("num_levels", 0)
+        return (adv_config,) + tuple(_level_col_updates(sheet, adv_config, num_levels))
 
     def on_adv_sheet_change(sheet, adv_config):
         """User clicks a different sheet tab — reload controls for that sheet."""
@@ -1553,14 +1501,14 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         cols   = list(conv.sheets_data[sheet].columns)
         t_val  = t_col if t_col in cols else (cols[0] if cols else None)
         label_mode_ui = "V1 (Prefixed)" if label_mode == "v1" else "V2 (Simple)"
-        return sheet, gr.update(value=n_lvl), gr.update(choices=cols, value=t_val), \
-               gr.update(value=label_mode_ui), \
-               render_adv_table(sheet, adv_config)
+        return (sheet, gr.update(value=n_lvl), gr.update(choices=cols, value=t_val),
+                gr.update(value=label_mode_ui),
+                render_adv_table(sheet, adv_config)) + tuple(_level_col_updates(sheet, adv_config, n_lvl))
 
     def on_adv_num_levels(n, sheet, adv_config):
         """User changes hierarchy-level count for the current sheet."""
         if not sheet:
-            return adv_config, render_adv_table(sheet, adv_config)
+            return (adv_config, render_adv_table(sheet, adv_config)) + tuple(_level_col_updates(sheet, adv_config, 0))
         n = int(n) if n is not None else 0
         adv_config.setdefault("sheets", {})
         adv_config["sheets"].setdefault(sheet, {"num_levels": 0, "title_col": "", "col_configs": {}})
@@ -1569,7 +1517,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         for cfg in adv_config["sheets"][sheet].get("col_configs", {}).values():
             if cfg.get("hierarchy") and cfg["hierarchy"] > n:
                 cfg["hierarchy"] = None
-        return adv_config, render_adv_table(sheet, adv_config)
+        return (adv_config, render_adv_table(sheet, adv_config)) + tuple(_level_col_updates(sheet, adv_config, n))
 
     def on_adv_title_col(title_col, sheet, adv_config):
         if not sheet or not title_col:
@@ -1628,16 +1576,17 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
         t_val = adv_config.get("sheets", {}).get(first, {}).get("title_col", cols[0] if cols else None)
         first_mode = adv_config.get("sheets", {}).get(first, {}).get("label_mode", "v1") if first else "v1"
         first_label_mode_ui = "V1 (Prefixed)" if first_mode == "v1" else "V2 (Simple)"
+        first_n_lvl = int(adv_config.get("sheets", {}).get(first, {}).get("num_levels", 0)) if first else 0
         return (
-            gr.update(choices=new_choices, value=first),          # hier_sheet (simple)
-            adv_config,                                            # adv_state
-            first or "",                                           # adv_cur_sheet
-            gr.update(choices=new_choices, value=first),          # adv_sheet_radio
-            gr.update(choices=cols, value=t_val),                  # adv_title_col
-            gr.update(value=first_label_mode_ui),                 # adv_label_mode
-            render_adv_table(first, adv_config) if first else "", # adv_table_html
-            invalidate(),                                          # gen_file
-        )
+            gr.update(choices=new_choices, value=first),
+            adv_config,
+            first or "",
+            gr.update(choices=new_choices, value=first),
+            gr.update(choices=cols, value=t_val),
+            gr.update(value=first_label_mode_ui),
+            render_adv_table(first, adv_config) if first else "",
+            invalidate(),
+        ) + tuple(_level_col_updates(first, adv_config, first_n_lvl) if first else [gr.update(visible=False)] * MAX_LEVELS)
 
     # ── File-load handler ─────────────────────────────────────────
 
@@ -1650,7 +1599,7 @@ with gr.Blocks(css=css, title="Graph Converter") as app:
                     "<p style='color:#888;font-size:13px'>No groups yet.</p>",
                     gr.update(value="V1 (Prefixed)"),
                     "<p style='color:#888'>Load a file and select a sheet.</p>",
-                    gr.update(choices=[]), invalidate(), gr.update(value=True))
+                    gr.update(choices=[]), invalidate(), gr.update(value=True)) + tuple([gr.update(visible=False)] * MAX_LEVELS)
 
         conv.selected_sheets = set(s for s in sheets if s != "structure")
         sel_list     = sorted(conv.selected_sheets)
